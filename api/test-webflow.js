@@ -7,14 +7,27 @@ export default async function handler(req, res) {
       return res.json({ error: 'Missing environment variables' });
     }
     
+    // Test basic Webflow API connection
+    const response = await fetch(`https://api.webflow.com/sites/${siteId}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'accept-version': '1.0.0'
+      }
+    });
+    
+    const data = await response.json();
+    
     return res.json({ 
-      success: true, 
-      message: 'Environment variables found',
-      hasToken: !!token,
-      hasSiteId: !!siteId
+      success: response.ok,
+      status: response.status,
+      webflowResponse: data,
+      message: response.ok ? 'Webflow connection successful' : 'Webflow API error'
     });
     
   } catch (error) {
-    return res.json({ error: error.message });
+    return res.json({ 
+      success: false,
+      error: error.message 
+    });
   }
 }
