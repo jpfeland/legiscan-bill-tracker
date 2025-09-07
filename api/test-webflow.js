@@ -36,8 +36,7 @@ export default async function handler(req, res) {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${WEBFLOW_TOKEN}`,
-        'Accept-Version': '1.0.0',
-        'Content-Type': 'application/json'
+        'accept-version': '1.0.0'
       }
     });
 
