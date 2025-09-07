@@ -1,0 +1,25 @@
+{
+  "name": "legiscan-bill-tracker",
+  "version": "1.0.0",
+  "description": "Bill tracking system using LegiScan API and Webflow CMS",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "echo 'No build step required'",
+    "deploy": "vercel --prod"
+  },
+  "keywords": ["legiscan", "bills", "tracking", "webflow", "government"],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+
+^x
+Exist
+Exit
+

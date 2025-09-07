@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "functions": {
+    "api/**/*.js": {
+      "runtime": "@vercel/node"
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/sync-bills",
+      "schedule": "0 8 * * *"
+    }
+  ],
+  "env": {
+    "LEGISCAN_API_KEY": "@legiscan_api_key"
+  }
+}
