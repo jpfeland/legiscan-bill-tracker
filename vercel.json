@@ -10,8 +10,5 @@
       "path": "/api/sync-bills",
       "schedule": "0 8 * * *"
     }
-  ],
-  "env": {
-    "LEGISCAN_API_KEY": "@legiscan_api_key"
-  }
+  ]
 }
