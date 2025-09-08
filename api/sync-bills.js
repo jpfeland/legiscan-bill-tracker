@@ -73,57 +73,34 @@ export default async function handler(req, res) {
     }
 
     // --- timeline helpers
-    const escapeHtml = (s='') =>
-      s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
-
-    const fmtDate = (d) => {
+    const esc = (s='') => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const fmt = (d) => {
       if (!d) return '';
       const [y,m,day] = (d.split('T')[0] || '').split('-');
-      const dt = (y && m && day) ? new Date(+y, +m - 1, +day) : new Date(d);
-      if (isNaN(dt)) return escapeHtml(d);
-      return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const dt = (y && m && day) ? new Date(+y, +m-1, +day) : new Date(d);
+      return isNaN(dt) ? esc(d) : dt.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
     };
 
     function buildTimelineHtml(info) {
-      const items = Array.isArray(info?.history) ? [...info.history] : [];
-      if (!items.length) {
+      const hist = Array.isArray(info?.history) ? [...info.history] : [];
+      if (!hist.length) {
         const d = info?.last_action_date || info?.status_date || '';
         const a = info?.last_action || 'No recent actions recorded';
         if (!d && !a) return '';
-        return `
-          <div class="timeline">
-            <h4>Last Action</h4>
-            <ol class="timeline-list">
-              <li class="timeline-item">
-                ${d ? `<time class="date" datetime="${escapeHtml(d)}">${fmtDate(d)}</time>` : ''}
-                <span class="action">${escapeHtml(a)}</span>
-              </li>
-            </ol>
-          </div>
-        `;
+        return `<h4>Last Action</h4><ul><li>${esc(fmt(d) ? `${fmt(d)} — ${a}` : a)}</li></ul>`;
       }
-      items.sort((a,b) => new Date(b.date || b.action_date || 0) - new Date(a.date || a.action_date || 0));
-      const top = items.slice(0, 12);
-      const rows = top.map((it, i) => {
-        const d = it.date || it.action_date || '';
-        const ch = it.chamber === 'H' ? 'House' : it.chamber === 'S' ? 'Senate' : (it.chamber || '');
-        const major = it.importance === 1 ? '<em class="badge">Major</em>' : '';
-        return `
-          <li class="timeline-item${i < 3 ? ' recent' : ''}">
-            ${d ? `<time class="date" datetime="${escapeHtml(d)}">${fmtDate(d)}</time>` : ''}
-            ${ch ? `<span class="chamber">${escapeHtml(ch)}</span>` : ''}
-            <span class="action">${escapeHtml(it.action || '')}</span>${major}
-          </li>
-        `;
+
+      // newest first, cap to 12
+      hist.sort((a,b) => new Date(b.date || b.action_date || 0) - new Date(a.date || a.action_date || 0));
+      const rows = hist.slice(0,12).map(it => {
+        const d = fmt(it.date || it.action_date || '');
+        const chamber = it.chamber === 'H' ? 'House' : it.chamber === 'S' ? 'Senate' : (it.chamber || '');
+        const major = it.importance === 1 ? ' (Major)' : '';
+        const parts = [d, chamber, it.action].filter(Boolean).join(' — ');
+        return `<li>${esc(parts)}${major}</li>`;
       }).join('');
-      return `
-        <div class="timeline">
-          <h4>Last Action</h4>
-          <ol class="timeline-list">
-            ${rows}
-          </ol>
-        </div>
-      `;
+
+      return `<h4>Last Action</h4><ul>${rows}</ul>`;
     }
 
     async function patchItem(itemId, data, { live } = {}) {
