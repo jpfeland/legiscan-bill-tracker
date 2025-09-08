@@ -186,7 +186,12 @@ export default async function handler(req, res) {
           headline: updateData.fieldData.name || currentName, 
           status: "updated", 
           setStatus: statusText,
-          lastAction: primaryInfo.last_action || null
+          lastAction: primaryInfo.last_action || null,
+          debug: {
+            hasLastAction: !!primaryInfo.last_action,
+            lastActionRaw: primaryInfo.last_action,
+            availableFields: Object.keys(primaryInfo).filter(key => key.includes('action') || key.includes('status') || key.includes('date'))
+          }
         });
         await sleep(220);
       } catch (err) {
