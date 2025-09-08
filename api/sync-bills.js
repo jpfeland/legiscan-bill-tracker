@@ -185,7 +185,8 @@ export default async function handler(req, res) {
           senateNumber, 
           headline: updateData.fieldData.name || currentName, 
           status: "updated", 
-          setStatus: statusText 
+          setStatus: statusText,
+          lastAction: updateData.fieldData["last-action"] || null
         });
         await sleep(220);
       } catch (err) {
