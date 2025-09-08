@@ -1,4 +1,7 @@
 // /api/sync-bills.js
+// Sync Webflow CMS bill items with LegiScan data (no description edits)
+// Auto-corrects misfiled HF/SF numbers and writes links to the right fields.
+
 export default async function handler(req, res) {
   try {
     const WEBFLOW_TOKEN = process.env.WEBFLOW_API_TOKEN;
@@ -10,19 +13,35 @@ export default async function handler(req, res) {
     }
 
     const results = { timestamp: new Date().toISOString(), processed: 0, updated: 0, skipped: 0, skipReasons: [], errors: [], bills: [] };
-
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     const STATUS_MAP = { 1: "Active", 2: "Active", 3: "Active", 4: "Passed", 5: "Failed", 6: "Failed" };
 
     const isPlaceholderName = (name, billNum) => {
       const n = (name || "").trim();
-      return (
-        !n ||
-        (billNum && n.toUpperCase() === billNum.toUpperCase()) ||
-        /^[HS]F[-\s]?\d+$/i.test(n) ||
-        /^(untitled|tbd|placeholder)$/i.test(n)
-      );
+      return !n || (billNum && n.toUpperCase() === billNum.toUpperCase()) || /^[HS]F[-\s]?\d+$/i.test(n) || /^(untitled|tbd|placeholder)$/i.test(n);
     };
+
+    // Normalize "HF 1099" -> "HF1099", detect swaps (HF typed in Senate field, etc.)
+    function normalizeNumbers(rawHouse, rawSenate) {
+      const norm = v => (v || "").toUpperCase().replace(/[\s-]+/g, "");
+      let h = norm(rawHouse);
+      let s = norm(rawSenate);
+
+      let corrections = {};
+      // If senate has HF and house is empty -> move to house
+      if (!h && /^HF\d+$/.test(s)) {
+        h = s; s = "";
+        corrections["house-file-number"] = h;
+        corrections["senate-file-number"] = ""; // clear wrong entry
+      }
+      // If house has SF and senate is empty -> move to senate
+      if (!s && /^SF\d+$/.test(h)) {
+        s = h; h = "";
+        corrections["senate-file-number"] = s;
+        corrections["house-file-number"] = "";
+      }
+      return { houseNumber: h || "", senateNumber: s || "", corrections };
+    }
 
     async function fetchLegiScanBill({ state, billNumber, year }) {
       let url = `https://api.legiscan.com/?key=${encodeURIComponent(LEGISCAN_API_KEY)}&op=getBill&state=${encodeURIComponent(state)}&bill=${encodeURIComponent(billNumber)}`;
@@ -38,7 +57,7 @@ export default async function handler(req, res) {
       const texts = Array.isArray(info.texts) ? info.texts.slice() : [];
       if (texts.length) {
         texts.sort((a, b) => new Date(b.date) - new Date(a.date));
-        const pdf = texts.find((t) => /pdf/i.test(t?.mime || "") || /\.pdf($|\?)/i.test(t?.url || ""));
+        const pdf = texts.find(t => /pdf/i.test(t?.mime || "") || /\.pdf($|\?)/i.test(t?.url || ""));
         if (pdf) return pdf.url || pdf.state_link || null;
         const first = texts[0];
         if (first) return first.url || first.state_link || null;
@@ -47,16 +66,16 @@ export default async function handler(req, res) {
     }
 
     async function patchItem(itemId, data, { live } = {}) {
-      const url = new URL(`https://api.webflow.com/v2/collections/${COLLECTION_ID}/items/${itemId}`);
-      if (live) url.searchParams.set("live", "true");
-      return fetch(url.toString(), {
+      const u = new URL(`https://api.webflow.com/v2/collections/${COLLECTION_ID}/items/${itemId}`);
+      if (live) u.searchParams.set("live", "true");
+      return fetch(u.toString(), {
         method: "PATCH",
         headers: { Authorization: `Bearer ${WEBFLOW_TOKEN}`, "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
     }
 
-    // fetch items
+    // List items
     const listRes = await fetch(`https://api.webflow.com/v2/collections/${COLLECTION_ID}/items`, {
       headers: { Authorization: `Bearer ${WEBFLOW_TOKEN}` },
     });
@@ -66,11 +85,13 @@ export default async function handler(req, res) {
     for (const bill of bills) {
       results.processed++;
 
-      const houseNumber = bill.fieldData["house-file-number"]?.trim();
-      const senateNumber = bill.fieldData["senate-file-number"]?.trim();
+      const rawHouse = bill.fieldData["house-file-number"] || "";
+      const rawSenate = bill.fieldData["senate-file-number"] || "";
       const currentName = bill.fieldData["name"]?.trim() || "";
       const jurisdiction = bill.fieldData["jurisdiction"]?.trim() || "";
       const legislativeYear = bill.fieldData["legislative-year"]?.toString().trim();
+
+      const { houseNumber, senateNumber, corrections } = normalizeNumbers(rawHouse, rawSenate);
 
       if (!houseNumber && !senateNumber) {
         results.skipped++; results.skipReasons.push({ id: bill.id, reason: "No HF/SF number" }); continue;
@@ -79,37 +100,66 @@ export default async function handler(req, res) {
       const state = /^federal$/i.test(jurisdiction) ? "US" : "MN";
 
       try {
-        const primaryNumber = houseNumber || senateNumber;
-        const primaryInfo = await fetchLegiScanBill({ state, billNumber: primaryNumber, year: legislativeYear });
-
-        let houseInfo = null, senateInfo = null;
-        if (houseNumber) houseInfo = primaryNumber === houseNumber ? primaryInfo : await (sleep(200), fetchLegiScanBill({ state, billNumber: houseNumber, year: legislativeYear }));
-        if (senateNumber) senateInfo = primaryNumber === senateNumber ? primaryInfo : await (sleep(200), fetchLegiScanBill({ state, billNumber: senateNumber, year: legislativeYear }));
+        // Fetch info only for numbers that actually exist
+        let houseInfo = null, senateInfo = null, primaryInfo = null, primaryNumber = houseNumber || senateNumber;
+        primaryInfo = await fetchLegiScanBill({ state, billNumber: primaryNumber, year: legislativeYear });
+        if (houseNumber && primaryNumber !== houseNumber) {
+          await sleep(180);
+          houseInfo = await fetchLegiScanBill({ state, billNumber: houseNumber, year: legislativeYear });
+        } else if (houseNumber) {
+          houseInfo = primaryInfo;
+        }
+        if (senateNumber && primaryNumber !== senateNumber) {
+          await sleep(180);
+          senateInfo = await fetchLegiScanBill({ state, billNumber: senateNumber, year: legislativeYear });
+        } else if (senateNumber) {
+          senateInfo = primaryInfo;
+        }
 
         const updateData = { fieldData: {} };
-        if (isPlaceholderName(currentName, primaryNumber)) updateData.fieldData["name"] = primaryInfo.title || primaryNumber;
-        updateData.fieldData["description"] = primaryInfo.description || primaryInfo.title || "No description available";
-        if (primaryInfo.status && STATUS_MAP[primaryInfo.status]) updateData.fieldData["bill-status"] = STATUS_MAP[primaryInfo.status];
 
-        const houseLink = pickBestTextUrl(houseInfo);
-        const senateLink = pickBestTextUrl(senateInfo);
-        if (houseLink)  updateData.fieldData["house-file-link"]  = houseLink;
-        if (senateLink) updateData.fieldData["senate-file-link"] = senateLink;
+        // Fix misfiled numbers in CMS if needed
+        Object.assign(updateData.fieldData, corrections);
+
+        // Headline (but not description)
+        if (isPlaceholderName(currentName, primaryNumber)) {
+          updateData.fieldData["name"] = primaryInfo.title || primaryNumber;
+        }
+
+        // Status
+        if (primaryInfo.status && STATUS_MAP[primaryInfo.status]) {
+          updateData.fieldData["bill-status"] = STATUS_MAP[primaryInfo.status];
+        }
+
+        // Links: only set if the corresponding number exists
+        if (houseNumber) {
+          const link = pickBestTextUrl(houseInfo);
+          if (link) updateData.fieldData["house-file-link"] = link;
+        } else {
+          // ensure no stale link in house field if we just moved it away
+          if (corrections["house-file-number"] === "") updateData.fieldData["house-file-link"] = "";
+        }
+
+        if (senateNumber) {
+          const link = pickBestTextUrl(senateInfo);
+          if (link) updateData.fieldData["senate-file-link"] = link;
+        } else {
+          if (corrections["senate-file-number"] === "") updateData.fieldData["senate-file-link"] = "";
+        }
 
         if (!Object.keys(updateData.fieldData).length) {
           results.skipped++; results.skipReasons.push({ id: bill.id, reason: "No changes to apply" }); continue;
         }
 
-        // Update both environments:
-        const staging = await patchItem(bill.id, updateData, { live: false }); // Designer/Editor data
+        // Patch staging then live
+        const staging = await patchItem(bill.id, updateData, { live: false });
         if (!staging.ok) {
           const e = await staging.json().catch(() => ({}));
           results.errors.push({ billId: bill.id, error: `Staging update failed: ${e.message || staging.statusText}` });
           continue;
         }
-
-        await sleep(200);
-        const live = await patchItem(bill.id, updateData, { live: true }); // Published site
+        await sleep(180);
+        const live = await patchItem(bill.id, updateData, { live: true });
         if (!live.ok) {
           const e = await live.json().catch(() => ({}));
           results.errors.push({ billId: bill.id, error: `Live update failed: ${e.message || live.statusText}` });
@@ -118,7 +168,7 @@ export default async function handler(req, res) {
 
         results.updated++;
         results.bills.push({ id: bill.id, houseNumber, senateNumber, headline: updateData.fieldData.name || currentName, status: "updated" });
-        await sleep(300);
+        await sleep(250);
       } catch (err) {
         results.errors.push({ billId: bill.id, error: err.message });
       }
