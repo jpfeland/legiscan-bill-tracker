@@ -10,38 +10,31 @@ export default async function handler(req, res) {
     }
 
     const results = { timestamp: new Date().toISOString(), processed: 0, updated: 0, skipped: 0, skipReasons: [], errors: [], bills: [] };
+    const toPublish = [];
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-    // Map status text to Webflow option IDs
+    // Webflow Option IDs (your IDs)
     const statusMapping = {
-      "Active": "960eac22ecc554a51654e69b9252ae80",
-      "Tabled": "7febd1eb78c2ea008f4f84c13afec8de", 
-      "Failed": "e15117e822e62b30d4c8a74770630f01",
-      "Passed": "d6de8b3f124dbc8e474cf520bfe7e9ca"
+      Active: "960eac22ecc554a51654e69b9252ae80",
+      Tabled: "7febd1eb78c2ea008f4f84c13afec8de",
+      Failed: "e15117e822e62b30d4c8a74770630f01",
+      Passed: "d6de8b3f124dbc8e474cf520bfe7e9ca",
     };
 
-    // Map LegiScan's numeric status; 1-3 become Active unless heuristics say "Tabled".
     const computeStatus = (billInfo, { state, legislativeYear }) => {
       const code = billInfo.status;
-      if (code === 4) return statusMapping["Passed"];
-      if (code === 5 || code === 6) return statusMapping["Failed"];
+      if (code === 4) return statusMapping.Passed;
+      if (code === 5 || code === 6) return statusMapping.Failed;
 
-      // Heuristic: session is over in MN after Jun 1
       const year = Number(legislativeYear);
-      const now = new Date();
-      const cutoff = state === "MN" && year
-        ? new Date(year, 5, 1) // Jun 1 (month is 0-based)
-        : null;
-
+      const cutoff = state === "MN" && year ? new Date(year, 5, 1) : null; // Jun 1
       const la = (billInfo.last_action || "").toLowerCase();
+      const looksDead = /tabled|laid on table|postponed|indefinitely|sine die|died|withdrawn|stricken/.test(la);
 
-      const looksDead =
-        /tabled|laid on table|postponed|indefinitely|sine die|died|withdrawn|stricken/.test(la);
+      if (looksDead) return statusMapping.Tabled;
+      if (cutoff && new Date() >= cutoff && (code === 1 || code === 2 || code === 3)) return statusMapping.Tabled;
 
-      if (looksDead) return statusMapping["Tabled"];
-      if (cutoff && now >= cutoff && (code === 1 || code === 2 || code === 3)) return statusMapping["Tabled"];
-
-      return statusMapping["Active"];
+      return statusMapping.Active;
     };
 
     const isPlaceholderName = (name, billNum) => {
@@ -80,13 +73,21 @@ export default async function handler(req, res) {
       return info.state_link || info.url || null;
     }
 
-    async function patchItem(itemId, data, { live } = {}) {
-      const u = new URL(`https://api.webflow.com/v2/collections/${COLLECTION_ID}/items/${itemId}`);
-      if (live) u.searchParams.set("live", "true");
-      return fetch(u.toString(), {
+    async function patchStaging(itemId, data) {
+      const u = `https://api.webflow.com/v2/collections/${COLLECTION_ID}/items/${itemId}`;
+      return fetch(u, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${WEBFLOW_TOKEN}`, "Content-Type": "application/json" },
         body: JSON.stringify(data),
+      });
+    }
+
+    async function publishItems(itemIds) {
+      const u = `https://api.webflow.com/v2/collections/${COLLECTION_ID}/items/publish`;
+      return fetch(u, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${WEBFLOW_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ itemIds }), // v2 publish endpoint
       });
     }
 
@@ -122,62 +123,41 @@ export default async function handler(req, res) {
         if (houseNumber) houseInfo = primaryNumber === houseNumber ? primaryInfo : await (sleep(180), fetchLegiScanBill({ state, billNumber: houseNumber, year: legislativeYear }));
         if (senateNumber) senateInfo = primaryNumber === senateNumber ? primaryInfo : await (sleep(180), fetchLegiScanBill({ state, billNumber: senateNumber, year: legislativeYear }));
 
-        // Prepare last action data
-        let lastActionData = null;
-        if (primaryInfo && primaryInfo.history && Array.isArray(primaryInfo.history) && primaryInfo.history.length > 0) {
-          const mostRecentAction = primaryInfo.history[primaryInfo.history.length - 1];
-          if (mostRecentAction && mostRecentAction.date && mostRecentAction.action) {
-            lastActionData = `${mostRecentAction.date}: ${mostRecentAction.action}`;
-          }
-        } else if (primaryInfo && primaryInfo.last_action) {
-          lastActionData = primaryInfo.last_action;
-        } else if (primaryInfo && primaryInfo.status_date) {
-          lastActionData = `Status updated: ${primaryInfo.status_date}`;
+        // Build timeline HTML (optional field)
+        let timelineHtml = "";
+        if (primaryInfo.history && Array.isArray(primaryInfo.history) && primaryInfo.history.length > 0) {
+          const sortedHistory = [...primaryInfo.history].sort((a, b) => new Date(b.date) - new Date(a.date));
+          timelineHtml = `<div class="timeline"><h4>LAST ACTION</h4>`;
+          sortedHistory.forEach((item, index) => {
+            const isRecent = index < 3;
+            const chamber = item.chamber === "H" ? "House" : item.chamber === "S" ? "Senate" : item.chamber;
+            const importance = item.importance === 1 ? " (Major)" : "";
+            timelineHtml += `
+              <div class="timeline-item${isRecent ? " recent" : ""}">
+                <p><strong>${item.date}</strong></p>
+                <p>${item.action}${importance}</p>
+                ${chamber ? `<p><small>${chamber}</small></p>` : ""}
+              </div>`;
+          });
+          timelineHtml += `</div>`;
         }
 
         const updateData = { fieldData: {} };
 
-        // Correct misfiled numbers
+        // Fix misfiled numbers
         Object.assign(updateData.fieldData, corrections);
 
-        // Headline only if placeholder
+        // Headline (only if placeholder)
         if (isPlaceholderName(currentName, primaryNumber)) {
           updateData.fieldData["name"] = primaryInfo.title || primaryNumber;
         }
 
-        // Status (returns option ID instead of text)
+        // Status (Option ID)
         const wfStatusId = computeStatus(primaryInfo, { state, legislativeYear });
         if (wfStatusId) updateData.fieldData["bill-status"] = wfStatusId;
 
-        // Create formatted timeline from history data
-        let timelineHtml = "";
-        if (primaryInfo.history && Array.isArray(primaryInfo.history) && primaryInfo.history.length > 0) {
-          // Sort history by date (most recent first)
-          const sortedHistory = [...primaryInfo.history].sort((a, b) => new Date(b.date) - new Date(a.date));
-          
-          timelineHtml = `<div class="timeline">
-            <h4>LAST ACTION</h4>`;
-          
-          sortedHistory.forEach((item, index) => {
-            const isRecent = index < 3; // Highlight first 3 entries
-            const chamber = item.chamber === 'H' ? 'House' : item.chamber === 'S' ? 'Senate' : item.chamber;
-            const importance = item.importance === 1 ? ' (Major)' : '';
-            
-            timelineHtml += `
-              <div class="timeline-item${isRecent ? ' recent' : ''}">
-                <p><strong>${item.date}</strong></p>
-                <p>${item.action}${importance}</p>
-                ${chamber ? `<p><small>${chamber}</small></p>` : ''}
-              </div>`;
-          });
-          
-          timelineHtml += `</div>`;
-        }
-
-        // Timeline only (removed last-action)
-        if (timelineHtml) {
-          updateData.fieldData["timeline"] = timelineHtml;
-        }
+        // Timeline (ensure your collection has a 'timeline' field)
+        if (timelineHtml) updateData.fieldData["timeline"] = timelineHtml;
 
         // Links
         if (houseNumber) {
@@ -186,7 +166,6 @@ export default async function handler(req, res) {
         } else if (corrections["house-file-number"] === "") {
           updateData.fieldData["house-file-link"] = "";
         }
-
         if (senateNumber) {
           const link = pickBestTextUrl(senateInfo);
           if (link) updateData.fieldData["senate-file-link"] = link;
@@ -198,64 +177,63 @@ export default async function handler(req, res) {
           results.skipped++; results.skipReasons.push({ id: bill.id, reason: "No changes to apply" }); continue;
         }
 
-        // Patch staging then live
-        const staging = await patchItem(bill.id, updateData, { live: false });
+        // Patch STAGING only
+        const staging = await patchStaging(bill.id, updateData);
         if (!staging.ok) {
           const e = await staging.json().catch(() => ({}));
           results.errors.push({ billId: bill.id, error: `Staging update failed: ${e.message || staging.statusText}` });
           continue;
         }
-        await sleep(160);
-        const live = await patchItem(bill.id, updateData, { live: true });
-        if (!live.ok) {
-          const e = await live.json().catch(() => ({}));
-          results.errors.push({ billId: bill.id, error: `Live update failed: ${e.message || live.statusText}` });
-          continue;
-        }
 
-        // Find the text status for logging
-        const statusText = Object.keys(statusMapping).find(key => statusMapping[key] === wfStatusId);
+        // Queue for publish
+        toPublish.push(bill.id);
 
+        const statusText = Object.keys(statusMapping).find(k => statusMapping[k] === wfStatusId);
         results.updated++;
-        results.bills.push({ 
-          id: bill.id, 
-          houseNumber, 
-          senateNumber, 
-          headline: updateData.fieldData.name || currentName, 
-          status: "updated", 
+        results.bills.push({
+          id: bill.id,
+          houseNumber,
+          senateNumber,
+          headline: updateData.fieldData.name || currentName,
+          status: "staged",
           setStatus: statusText,
-          lastAction: lastActionData,
-          timelinePreview: timelineHtml ? "Timeline generated" : "No timeline data"
+          timelinePreview: timelineHtml ? "Timeline generated" : "No timeline data",
         });
-        await sleep(220);
+
+        await sleep(120);
       } catch (err) {
         results.errors.push({ billId: bill.id, error: err.message });
       }
     }
 
-    // Bulk publish all successfully updated items
-    if (results.updatedItemIds.length > 0) {
-      try {
-        const publishResponse = await publishItems(results.updatedItemIds);
-        if (!publishResponse.ok) {
-          const publishError = await publishResponse.json().catch(() => ({}));
-          results.errors.push({ 
-            error: `Bulk publish failed: ${publishError.message || publishResponse.statusText}`,
-            affectedItems: results.updatedItemIds 
-          });
-        }
-      } catch (publishErr) {
-        results.errors.push({ 
-          error: `Bulk publish failed: ${publishErr.message}`,
-          affectedItems: results.updatedItemIds 
-        });
+    // Publish all staged updates to LIVE in one call (or chunks of 100)
+    const chunk = 100;
+    for (let i = 0; i < toPublish.length; i += chunk) {
+      const slice = toPublish.slice(i, i + chunk);
+      const pubRes = await publishItems(slice);
+      if (!pubRes.ok) {
+        const e = await pubRes.json().catch(() => ({}));
+        results.errors.push({ error: `Publish failed: ${e.message || pubRes.statusText}`, affectedItems: slice });
+      } else {
+        const body = await pubRes.json().catch(() => ({}));
+        // Optional: attach publish result
+        results.bills.push({ published: body.publishedItemIds?.length || 0, errors: body.errors || [] });
       }
+      // Publish endpoints are throttled; be nice.
+      await sleep(900);
     }
 
     return res.status(200).json({
       success: true,
       timestamp: results.timestamp,
-      summary: { totalBills: bills.length, processed: results.processed, updated: results.updated, skipped: results.skipped, errors: results.errors.length },
+      summary: {
+        totalBills: bills.length,
+        processed: results.processed,
+        updated: results.updated,
+        skipped: results.skipped,
+        publishedBatches: Math.ceil(toPublish.length / 100) || 0,
+        errors: results.errors.length
+      },
       updatedBills: results.bills,
       skipReasons: results.skipReasons.length ? results.skipReasons : undefined,
       errors: results.errors.length ? results.errors : undefined,
