@@ -12,11 +12,19 @@ export default async function handler(req, res) {
     const results = { timestamp: new Date().toISOString(), processed: 0, updated: 0, skipped: 0, skipReasons: [], errors: [], bills: [] };
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+    // Map status text to Webflow option IDs
+    const statusMapping = {
+      "Active": "960eac22ecc554a51654e69b9252ae80",
+      "Tabled": "7febd1eb78c2ea008f4f84c13afec8de", 
+      "Failed": "e15117e822e62b30d4c8a74770630f01",
+      "Passed": "d6de8b3f124dbc8e474cf520bfe7e9ca"
+    };
+
     // Map LegiScan's numeric status; 1-3 become Active unless heuristics say "Tabled".
     const computeStatus = (billInfo, { state, legislativeYear }) => {
       const code = billInfo.status;
-      if (code === 4) return "Passed";
-      if (code === 5 || code === 6) return "Failed";
+      if (code === 4) return statusMapping["Passed"];
+      if (code === 5 || code === 6) return statusMapping["Failed"];
 
       // Heuristic: session is over in MN after Jun 1
       const year = Number(legislativeYear);
@@ -30,10 +38,10 @@ export default async function handler(req, res) {
       const looksDead =
         /tabled|laid on table|postponed|indefinitely|sine die|died|withdrawn|stricken/.test(la);
 
-      if (looksDead) return "Tabled";
-      if (cutoff && now >= cutoff && (code === 1 || code === 2 || code === 3)) return "Tabled";
+      if (looksDead) return statusMapping["Tabled"];
+      if (cutoff && now >= cutoff && (code === 1 || code === 2 || code === 3)) return statusMapping["Tabled"];
 
-      return "Active";
+      return statusMapping["Active"];
     };
 
     const isPlaceholderName = (name, billNum) => {
@@ -124,9 +132,9 @@ export default async function handler(req, res) {
           updateData.fieldData["name"] = primaryInfo.title || primaryNumber;
         }
 
-        // Status (Active / Tabled / Passed / Failed)
-        const wfStatus = computeStatus(primaryInfo, { state, legislativeYear });
-        if (wfStatus) updateData.fieldData["bill-status"] = wfStatus;
+        // Status (returns option ID instead of text)
+        const wfStatusId = computeStatus(primaryInfo, { state, legislativeYear });
+        if (wfStatusId) updateData.fieldData["bill-status"] = wfStatusId;
 
         // Links
         if (houseNumber) {
@@ -162,8 +170,18 @@ export default async function handler(req, res) {
           continue;
         }
 
+        // Find the text status for logging
+        const statusText = Object.keys(statusMapping).find(key => statusMapping[key] === wfStatusId);
+
         results.updated++;
-        results.bills.push({ id: bill.id, houseNumber, senateNumber, headline: updateData.fieldData.name || currentName, status: "updated", setStatus: wfStatus });
+        results.bills.push({ 
+          id: bill.id, 
+          houseNumber, 
+          senateNumber, 
+          headline: updateData.fieldData.name || currentName, 
+          status: "updated", 
+          setStatus: statusText 
+        });
         await sleep(220);
       } catch (err) {
         results.errors.push({ billId: bill.id, error: err.message });
