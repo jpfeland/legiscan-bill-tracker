@@ -163,9 +163,9 @@ export default async function handler(req, res) {
             
             timelineHtml += `
               <div class="timeline-item${isRecent ? ' recent' : ''}">
-                <strong>${item.date}</strong><br>
-                ${item.action}${importance ? `<em>${importance}</em>` : ''}
-                ${chamber ? `<br><small>${chamber}</small>` : ''}
+                <p><strong>${item.date}</strong></p>
+                <p>${item.action}${importance}</p>
+                ${chamber ? `<p><small>${chamber}</small></p>` : ''}
               </div>`;
           });
           
@@ -228,6 +228,25 @@ export default async function handler(req, res) {
         await sleep(220);
       } catch (err) {
         results.errors.push({ billId: bill.id, error: err.message });
+      }
+    }
+
+    // Bulk publish all successfully updated items
+    if (results.updatedItemIds.length > 0) {
+      try {
+        const publishResponse = await publishItems(results.updatedItemIds);
+        if (!publishResponse.ok) {
+          const publishError = await publishResponse.json().catch(() => ({}));
+          results.errors.push({ 
+            error: `Bulk publish failed: ${publishError.message || publishResponse.statusText}`,
+            affectedItems: results.updatedItemIds 
+          });
+        }
+      } catch (publishErr) {
+        results.errors.push({ 
+          error: `Bulk publish failed: ${publishErr.message}`,
+          affectedItems: results.updatedItemIds 
+        });
       }
     }
 
