@@ -6,11 +6,10 @@ export default async function handler(req, res) {
       return res.json({ error: 'Missing API token' });
     }
     
-    // Test user endpoint with corrected header case
+    // Test user endpoint without version header
     const response = await fetch('https://api.webflow.com/user', {
       headers: {
-        'Authorization': `Bearer ${token}`,
-        'Accept-Version': '1.0.0'
+        'Authorization': `Bearer ${token}`
       }
     });
     
