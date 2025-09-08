@@ -87,7 +87,8 @@ export default async function handler(req, res) {
         const d = info?.last_action_date || info?.status_date || '';
         const a = info?.last_action || 'No recent actions recorded';
         if (!d && !a) return '';
-        return `<h4>Last Action</h4><ul><li>${esc(fmt(d) ? `${fmt(d)} — ${a}` : a)}</li></ul>`;
+        const dateText = fmt(d);
+        return `<h4>Last Action</h4><p>${dateText ? `<strong>${esc(dateText)}</strong><br>${esc(a)}` : esc(a)}</p>`;
       }
 
       // newest first, cap to 12
@@ -96,11 +97,15 @@ export default async function handler(req, res) {
         const d = fmt(it.date || it.action_date || '');
         const chamber = it.chamber === 'H' ? 'House' : it.chamber === 'S' ? 'Senate' : (it.chamber || '');
         const major = it.importance === 1 ? ' (Major)' : '';
-        const parts = [d, chamber, it.action].filter(Boolean).join(' — ');
-        return `<li>${esc(parts)}${major}</li>`;
+        
+        // Build action text with chamber info
+        const actionParts = [chamber, it.action].filter(Boolean).join(' — ');
+        const fullAction = `${actionParts}${major}`;
+        
+        return d ? `<p><strong>${esc(d)}</strong><br>${esc(fullAction)}</p>` : `<p>${esc(fullAction)}</p>`;
       }).join('');
 
-      return `<h4>Last Action</h4><ul>${rows}</ul>`;
+      return `<h4>Last Action</h4>${rows}`;
     }
 
     async function patchItem(itemId, data, { live } = {}) {
