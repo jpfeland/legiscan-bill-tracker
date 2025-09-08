@@ -186,7 +186,7 @@ export default async function handler(req, res) {
           headline: updateData.fieldData.name || currentName, 
           status: "updated", 
           setStatus: statusText,
-          lastAction: lastActionText
+          lastAction: primaryInfo.last_action || null
         });
         await sleep(220);
       } catch (err) {
