@@ -136,6 +136,11 @@ export default async function handler(req, res) {
         const wfStatusId = computeStatus(primaryInfo, { state, legislativeYear });
         if (wfStatusId) updateData.fieldData["bill-status"] = wfStatusId;
 
+        // Last Action - Add this new field
+        if (primaryInfo.last_action) {
+          updateData.fieldData["last-action"] = primaryInfo.last_action;
+        }
+
         // Links
         if (houseNumber) {
           const link = pickBestTextUrl(houseInfo);
