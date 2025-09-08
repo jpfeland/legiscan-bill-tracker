@@ -1,5 +1,5 @@
 // /api/sync-bills.js
-// Sync Webflow CMS bill items with LegiScan data
+// Sync Webflow CMS bill items with LegiScan data, incl. House/Senate file links
 
 export default async function handler(req, res) {
   try {
@@ -10,8 +10,8 @@ export default async function handler(req, res) {
     if (!WEBFLOW_TOKEN || !LEGISCAN_API_KEY) {
       return res.status(400).json({
         success: false,
-        error: 'Missing environment variables',
-        message: 'WEBFLOW_API_TOKEN and LEGISCAN_API_KEY required',
+        error: "Missing environment variables",
+        message: "WEBFLOW_API_TOKEN and LEGISCAN_API_KEY required",
       });
     }
 
@@ -25,30 +25,22 @@ export default async function handler(req, res) {
       bills: [],
     };
 
-    // 1) Fetch items from Webflow
-    const billsResponse = await fetch(
-      `https://api.webflow.com/v2/collections/${COLLECTION_ID}/items`,
-      { headers: { Authorization: `Bearer ${WEBFLOW_TOKEN}` } }
-    );
-    if (!billsResponse.ok) {
-      throw new Error(`Webflow API error: ${billsResponse.status}`);
-    }
+    // --- helpers ------------------------------------------------------------
 
-    const billsData = await billsResponse.json();
-    const bills = billsData.items || [];
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-    // Helpers
     const STATUS_MAP = {
-      1: 'Active', // Introduced
-      2: 'Active', // Engrossed
-      3: 'Active', // Enrolled
-      4: 'Passed', // Passed
-      5: 'Failed', // Vetoed
-      6: 'Failed', // Dead
+      1: "Active", // Introduced
+      2: "Active", // Engrossed
+      3: "Active", // Enrolled
+      4: "Passed", // Passed
+      5: "Failed", // Vetoed
+      6: "Failed", // Dead
     };
 
+    // Only overwrite "name" if it's obviously a placeholder
     const isPlaceholderName = (name, billNum) => {
-      const n = (name || '').trim();
+      const n = (name || "").trim();
       if (!n) return true;
       if (billNum && n.toUpperCase() === billNum.toUpperCase()) return true;
       if (/^[HS]F[-\s]?\d+$/i.test(n)) return true; // "HF1099", "SF 123"
@@ -56,80 +48,129 @@ export default async function handler(req, res) {
       return false;
     };
 
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    async function fetchLegiScanBill({ state, billNumber, year }) {
+      let apiUrl = `https://api.legiscan.com/?key=${encodeURIComponent(
+        LEGISCAN_API_KEY
+      )}&op=getBill&state=${encodeURIComponent(
+        state
+      )}&bill=${encodeURIComponent(billNumber)}`;
+      if (year) apiUrl += `&year=${encodeURIComponent(year)}`;
 
-    // 2) Process each item
+      const resp = await fetch(apiUrl);
+      const data = await resp.json();
+      if (data.status !== "OK" || !data.bill) {
+        throw new Error(data.alert?.message || "Bill not found in LegiScan");
+      }
+      return data.bill;
+    }
+
+    // Prefer newest PDF text; else newest text link; else bill page/state link
+    function pickBestTextUrl(billInfo) {
+      if (!billInfo) return null;
+      const texts = Array.isArray(billInfo.texts) ? billInfo.texts.slice() : [];
+      if (texts.length) {
+        texts.sort((a, b) => new Date(b.date) - new Date(a.date)); // newest first
+        const pdf = texts.find(
+          (t) => /pdf/i.test(t?.mime || "") || /\.pdf($|\?)/i.test(t?.url || "")
+        );
+        if (pdf) return pdf.url || pdf.state_link || null;
+        const first = texts[0];
+        if (first) return first.url || first.state_link || null;
+      }
+      return billInfo.state_link || billInfo.url || null;
+    }
+
+    // --- fetch Webflow items -----------------------------------------------
+
+    const billsResponse = await fetch(
+      `https://api.webflow.com/v2/collections/${COLLECTION_ID}/items`,
+      { headers: { Authorization: `Bearer ${WEBFLOW_TOKEN}` } }
+    );
+    if (!billsResponse.ok) throw new Error(`Webflow API error: ${billsResponse.status}`);
+
+    const billsData = await billsResponse.json();
+    const bills = billsData.items || [];
+
+    // --- process ------------------------------------------------------------
+
     for (const bill of bills) {
       results.processed++;
 
-      const houseNumber = bill.fieldData['house-file-number']?.trim();
-      const senateNumber = bill.fieldData['senate-file-number']?.trim();
-      const currentName = bill.fieldData['name']?.trim() || '';
-      const jurisdiction = bill.fieldData['jurisdiction']?.trim() || '';
-      const legislativeYear = bill.fieldData['legislative-year']?.toString().trim();
+      const houseNumber = bill.fieldData["house-file-number"]?.trim();
+      const senateNumber = bill.fieldData["senate-file-number"]?.trim();
+      const currentName = bill.fieldData["name"]?.trim() || "";
+      const jurisdiction = bill.fieldData["jurisdiction"]?.trim() || "";
+      const legislativeYear = bill.fieldData["legislative-year"]?.toString().trim();
 
-      const billNumber = houseNumber || senateNumber;
-      if (!billNumber) {
+      if (!houseNumber && !senateNumber) {
         results.skipped++;
-        results.skipReasons.push({ id: bill.id, reason: 'No HF/SF number' });
+        results.skipReasons.push({ id: bill.id, reason: "No HF/SF number" });
         continue;
       }
 
-      // Default MN unless explicitly Federal
-      const state = /^federal$/i.test(jurisdiction) ? 'US' : 'MN';
+      const state = /^federal$/i.test(jurisdiction) ? "US" : "MN";
 
       try {
-        // 3) LegiScan lookup
-        let apiUrl = `https://api.legiscan.com/?key=${encodeURIComponent(
-          LEGISCAN_API_KEY
-        )}&op=getBill&state=${encodeURIComponent(state)}&bill=${encodeURIComponent(billNumber)}`;
-        if (legislativeYear) apiUrl += `&year=${encodeURIComponent(legislativeYear)}`;
+        const primaryNumber = houseNumber || senateNumber;
 
-        const legiscanResponse = await fetch(apiUrl);
-        const legiscanData = await legiscanResponse.json();
+        const primaryInfo = await fetchLegiScanBill({
+          state,
+          billNumber: primaryNumber,
+          year: legislativeYear,
+        });
 
-        if (legiscanData.status !== 'OK' || !legiscanData.bill) {
-          results.errors.push({
-            billId: bill.id,
-            billNumber,
-            error: legiscanData.alert?.message || 'Bill not found in LegiScan',
-          });
-          continue;
+        let houseInfo = null;
+        let senateInfo = null;
+
+        if (houseNumber) {
+          houseInfo =
+            primaryNumber === houseNumber
+              ? primaryInfo
+              : await (sleep(200), fetchLegiScanBill({ state, billNumber: houseNumber, year: legislativeYear }));
         }
 
-        const billInfo = legiscanData.bill;
+        if (senateNumber) {
+          senateInfo =
+            primaryNumber === senateNumber
+              ? primaryInfo
+              : await (sleep(200), fetchLegiScanBill({ state, billNumber: senateNumber, year: legislativeYear }));
+        }
 
-        // 4) Build update payload
         const updateData = { fieldData: {} };
 
-        // Only overwrite name if it's a placeholder
-        if (isPlaceholderName(currentName, billNumber)) {
-          updateData.fieldData['name'] = billInfo.title || billNumber;
+        // Headline
+        if (isPlaceholderName(currentName, primaryNumber)) {
+          updateData.fieldData["name"] = primaryInfo.title || primaryNumber;
         }
 
-        // Always refresh description + status
-        updateData.fieldData['description'] =
-          billInfo.description || billInfo.title || 'No description available';
+        // Description
+        updateData.fieldData["description"] =
+          primaryInfo.description || primaryInfo.title || "No description available";
 
-        if (billInfo.status && STATUS_MAP[billInfo.status]) {
-          updateData.fieldData['bill-status'] = STATUS_MAP[billInfo.status];
+        // Status
+        if (primaryInfo.status && STATUS_MAP[primaryInfo.status]) {
+          updateData.fieldData["bill-status"] = STATUS_MAP[primaryInfo.status];
         }
 
-        // Nothing to change? Skip.
+        // Links (your updated slugs)
+        const houseLink = pickBestTextUrl(houseInfo);
+        const senateLink = pickBestTextUrl(senateInfo);
+        if (houseLink) updateData.fieldData["house-file-link"] = houseLink;
+        if (senateLink) updateData.fieldData["senate-file-link"] = senateLink;
+
         if (Object.keys(updateData.fieldData).length === 0) {
           results.skipped++;
-          results.skipReasons.push({ id: bill.id, reason: 'No changes to apply' });
+          results.skipReasons.push({ id: bill.id, reason: "No changes to apply" });
           continue;
         }
 
-        // 5) Patch Webflow
         const updateResponse = await fetch(
           `https://api.webflow.com/v2/collections/${COLLECTION_ID}/items/${bill.id}`,
           {
-            method: 'PATCH',
+            method: "PATCH",
             headers: {
               Authorization: `Bearer ${WEBFLOW_TOKEN}`,
-              'Content-Type': 'application/json',
+              "Content-Type": "application/json",
             },
             body: JSON.stringify(updateData),
           }
@@ -139,23 +180,22 @@ export default async function handler(req, res) {
           results.updated++;
           results.bills.push({
             id: bill.id,
-            billNumber,
+            houseNumber,
+            senateNumber,
             headline: updateData.fieldData.name || currentName,
-            status: 'updated',
+            status: "updated",
           });
         } else {
           const errorData = await updateResponse.json().catch(() => ({}));
           results.errors.push({
             billId: bill.id,
-            billNumber,
             error: `Webflow update failed: ${errorData.message || updateResponse.statusText}`,
           });
         }
 
-        // Rate-limit safety
-        await sleep(500);
+        await sleep(350);
       } catch (err) {
-        results.errors.push({ billId: bill.id, billNumber, error: err.message });
+        results.errors.push({ billId: bill.id, error: err.message });
       }
     }
 
@@ -174,11 +214,11 @@ export default async function handler(req, res) {
       errors: results.errors.length ? results.errors : undefined,
     });
   } catch (error) {
-    console.error('Sync failed:', error);
+    console.error("Sync failed:", error);
     return res.status(500).json({
       success: false,
       error: error.message,
-      message: 'Bills sync failed',
+      message: "Bills sync failed",
     });
   }
 }
