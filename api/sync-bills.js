@@ -147,9 +147,34 @@ export default async function handler(req, res) {
         const wfStatusId = computeStatus(primaryInfo, { state, legislativeYear });
         if (wfStatusId) updateData.fieldData["bill-status"] = wfStatusId;
 
-        // Last Action
-        if (lastActionData) {
-          updateData.fieldData["last-action"] = lastActionData;
+        // Create formatted timeline from history data
+        let timelineHtml = "";
+        if (primaryInfo.history && Array.isArray(primaryInfo.history) && primaryInfo.history.length > 0) {
+          // Sort history by date (most recent first)
+          const sortedHistory = [...primaryInfo.history].sort((a, b) => new Date(b.date) - new Date(a.date));
+          
+          timelineHtml = `<div class="timeline">
+            <h4>LAST ACTION</h4>`;
+          
+          sortedHistory.forEach((item, index) => {
+            const isRecent = index < 3; // Highlight first 3 entries
+            const chamber = item.chamber === 'H' ? 'House' : item.chamber === 'S' ? 'Senate' : item.chamber;
+            const importance = item.importance === 1 ? ' (Major)' : '';
+            
+            timelineHtml += `
+              <div class="timeline-item${isRecent ? ' recent' : ''}">
+                <strong>${item.date}</strong><br>
+                ${item.action}${importance ? `<em>${importance}</em>` : ''}
+                ${chamber ? `<br><small>${chamber}</small>` : ''}
+              </div>`;
+          });
+          
+          timelineHtml += `</div>`;
+        }
+
+        // Timeline only (removed last-action)
+        if (timelineHtml) {
+          updateData.fieldData["timeline"] = timelineHtml;
         }
 
         // Links
@@ -198,30 +223,7 @@ export default async function handler(req, res) {
           status: "updated", 
           setStatus: statusText,
           lastAction: lastActionData,
-          fullLegiscanData: {
-            // Complete history timeline
-            history: primaryInfo.history || [],
-            
-            // Progress milestones
-            progress: primaryInfo.progress || [],
-            
-            // All status-related fields
-            status: primaryInfo.status,
-            status_date: primaryInfo.status_date,
-            last_action: primaryInfo.last_action,
-            completed: primaryInfo.completed,
-            
-            // Committee/referral info
-            committee: primaryInfo.committee || null,
-            referrals: primaryInfo.referrals || [],
-            pending_committee_id: primaryInfo.pending_committee_id,
-            
-            // Additional timeline data
-            calendar: primaryInfo.calendar || [],
-            
-            // All available fields for reference
-            availableFields: Object.keys(primaryInfo)
-          }
+          timelinePreview: timelineHtml ? "Timeline generated" : "No timeline data"
         });
         await sleep(220);
       } catch (err) {
