@@ -122,6 +122,17 @@ export default async function handler(req, res) {
         if (houseNumber) houseInfo = primaryNumber === houseNumber ? primaryInfo : await (sleep(180), fetchLegiScanBill({ state, billNumber: houseNumber, year: legislativeYear }));
         if (senateNumber) senateInfo = primaryNumber === senateNumber ? primaryInfo : await (sleep(180), fetchLegiScanBill({ state, billNumber: senateNumber, year: legislativeYear }));
 
+        // Prepare last action data
+        let lastActionData = null;
+        if (primaryInfo.history && Array.isArray(primaryInfo.history) && primaryInfo.history.length > 0) {
+          const mostRecentAction = primaryInfo.history[primaryInfo.history.length - 1];
+          lastActionData = `${mostRecentAction.date}: ${mostRecentAction.action}`;
+        } else if (primaryInfo.last_action) {
+          lastActionData = primaryInfo.last_action;
+        } else if (primaryInfo.status_date) {
+          lastActionData = `Status updated: ${primaryInfo.status_date}`;
+        }
+
         const updateData = { fieldData: {} };
 
         // Correct misfiled numbers
@@ -136,9 +147,9 @@ export default async function handler(req, res) {
         const wfStatusId = computeStatus(primaryInfo, { state, legislativeYear });
         if (wfStatusId) updateData.fieldData["bill-status"] = wfStatusId;
 
-        // Last Action - Add this new field
-        if (primaryInfo.last_action) {
-          updateData.fieldData["last-action"] = primaryInfo.last_action;
+        // Last Action
+        if (lastActionData) {
+          updateData.fieldData["last-action"] = lastActionData;
         }
 
         // Links
@@ -160,8 +171,6 @@ export default async function handler(req, res) {
           results.skipped++; results.skipReasons.push({ id: bill.id, reason: "No changes to apply" }); continue;
         }
 
-        // Skip Webflow updates for debugging - just comment out the patch calls
-        /*
         // Patch staging then live
         const staging = await patchItem(bill.id, updateData, { live: false });
         if (!staging.ok) {
@@ -176,7 +185,6 @@ export default async function handler(req, res) {
           results.errors.push({ billId: bill.id, error: `Live update failed: ${e.message || live.statusText}` });
           continue;
         }
-        */
 
         // Find the text status for logging
         const statusText = Object.keys(statusMapping).find(key => statusMapping[key] === wfStatusId);
@@ -189,7 +197,31 @@ export default async function handler(req, res) {
           headline: updateData.fieldData.name || currentName, 
           status: "updated", 
           setStatus: statusText,
-          lastAction: lastActionData
+          lastAction: lastActionData,
+          fullLegiscanData: {
+            // Complete history timeline
+            history: primaryInfo.history || [],
+            
+            // Progress milestones
+            progress: primaryInfo.progress || [],
+            
+            // All status-related fields
+            status: primaryInfo.status,
+            status_date: primaryInfo.status_date,
+            last_action: primaryInfo.last_action,
+            completed: primaryInfo.completed,
+            
+            // Committee/referral info
+            committee: primaryInfo.committee || null,
+            referrals: primaryInfo.referrals || [],
+            pending_committee_id: primaryInfo.pending_committee_id,
+            
+            // Additional timeline data
+            calendar: primaryInfo.calendar || [],
+            
+            // All available fields for reference
+            availableFields: Object.keys(primaryInfo)
+          }
         });
         await sleep(220);
       } catch (err) {
