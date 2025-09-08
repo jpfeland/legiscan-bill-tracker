@@ -3,10 +3,10 @@ export default async function handler(req, res) {
   try {
     const WEBFLOW_TOKEN = process.env.WEBFLOW_API_TOKEN;
     const LEGISCAN_API_KEY = process.env.LEGISCAN_API_KEY;
-    const COLLECTION_ID = "68b8b074ed73a91391908240";
+    const COLLECTION_ID = process.env.WEBFLOW_BILLS_COLLECTION_ID;
 
-    if (!WEBFLOW_TOKEN || !LEGISCAN_API_KEY) {
-      return res.status(400).json({ success: false, error: "Missing env vars" });
+    if (!WEBFLOW_TOKEN || !LEGISCAN_API_KEY || !COLLECTION_ID) {
+      return res.status(400).json({ success: false, error: "Missing environment variables" });
     }
 
     const results = { timestamp: new Date().toISOString(), processed: 0, updated: 0, skipped: 0, skipReasons: [], errors: [], bills: [] };
