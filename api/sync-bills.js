@@ -98,6 +98,7 @@ export default async function handler(req, res) {
     const bills = (await listRes.json()).items || [];
 
     for (const bill of bills) {
+      console.log("Processing bill:", bill?.id);
       results.processed++;
 
       const rawHouse = bill.fieldData["house-file-number"] || "";
@@ -105,6 +106,8 @@ export default async function handler(req, res) {
       const currentName = bill.fieldData["name"]?.trim() || "";
       const jurisdiction = bill.fieldData["jurisdiction"]?.trim() || "";
       const legislativeYear = bill.fieldData["legislative-year"]?.toString().trim();
+
+      console.log("Bill data:", { rawHouse, rawSenate, currentName, jurisdiction, legislativeYear });
 
       const { houseNumber, senateNumber, corrections } = normalizeNumbers(rawHouse, rawSenate);
 
@@ -116,7 +119,9 @@ export default async function handler(req, res) {
 
       try {
         const primaryNumber = houseNumber || senateNumber;
+        console.log("Fetching LegiScan data for:", primaryNumber);
         const primaryInfo = await fetchLegiScanBill({ state, billNumber: primaryNumber, year: legislativeYear });
+        console.log("Got primaryInfo, history length:", primaryInfo?.history?.length || 'no history');
 
         let houseInfo = null, senateInfo = null;
         if (houseNumber) houseInfo = primaryNumber === houseNumber ? primaryInfo : await (sleep(180), fetchLegiScanBill({ state, billNumber: houseNumber, year: legislativeYear }));
