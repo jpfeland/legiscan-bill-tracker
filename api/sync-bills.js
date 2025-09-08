@@ -93,16 +93,20 @@ export default async function handler(req, res) {
 
       // newest first, cap to 12
       hist.sort((a,b) => new Date(b.date || b.action_date || 0) - new Date(a.date || a.action_date || 0));
-      const rows = hist.slice(0,12).map(it => {
+      const rows = hist.slice(0,12).map((it, index) => {
         const d = fmt(it.date || it.action_date || '');
-        const chamber = it.chamber === 'H' ? 'House' : it.chamber === 'S' ? 'Senate' : (it.chamber || '');
-        const major = it.importance === 1 ? ' (Major)' : '';
+        const isLatest = index === 0;
         
-        // Build action text with chamber info
-        const actionParts = [chamber, it.action].filter(Boolean).join(' — ');
-        const fullAction = `${actionParts}${major}`;
+        // Just the action text, no chamber or major flags
+        const actionText = it.action || '';
         
-        return d ? `<p><strong>${esc(d)}</strong><br>${esc(fullAction)}</p>` : `<p>${esc(fullAction)}</p>`;
+        if (isLatest) {
+          // Latest entry: normal styling
+          return d ? `<p><strong>${esc(d)}</strong><br>${esc(actionText)}</p>` : `<p>${esc(actionText)}</p>`;
+        } else {
+          // Regular entries: p2 class and gray color
+          return d ? `<p class="p2" style="color: var(--Gray-03);"><strong>${esc(d)}</strong><br>${esc(actionText)}</p>` : `<p class="p2" style="color: var(--Gray-03);">${esc(actionText)}</p>`;
+        }
       }).join('');
 
       return `<h4>Last Action</h4>${rows}`;
