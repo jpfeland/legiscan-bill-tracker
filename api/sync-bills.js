@@ -1,4 +1,16 @@
-// /api/sync-bills.js
+const updateData = { fieldData: {} };
+
+        // Fix misfiled numbers
+        Object.assign(updateData.fieldData, corrections);
+
+        // Headline (only if placeholder)
+        if (isPlaceholderName(currentName, primaryNumber)) {
+          updateData.fieldData["name"] = primaryInfo.title || primaryNumber;
+        }
+
+        // Status (Option ID)
+        const wfStatusId = computeStatus(primaryInfo, { state, legislativeYear });
+        if (wfStatusId) updateData.fieldData["bill-status"] = wfStatusId;// /api/sync-bills.js
 export default async function handler(req, res) {
   try {
     const WEBFLOW_TOKEN = process.env.WEBFLOW_API_TOKEN;
