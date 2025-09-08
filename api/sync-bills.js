@@ -160,6 +160,8 @@ export default async function handler(req, res) {
           results.skipped++; results.skipReasons.push({ id: bill.id, reason: "No changes to apply" }); continue;
         }
 
+        // Skip Webflow updates for debugging - just comment out the patch calls
+        /*
         // Patch staging then live
         const staging = await patchItem(bill.id, updateData, { live: false });
         if (!staging.ok) {
@@ -174,6 +176,7 @@ export default async function handler(req, res) {
           results.errors.push({ billId: bill.id, error: `Live update failed: ${e.message || live.statusText}` });
           continue;
         }
+        */
 
         // Find the text status for logging
         const statusText = Object.keys(statusMapping).find(key => statusMapping[key] === wfStatusId);
