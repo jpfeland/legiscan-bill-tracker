@@ -124,12 +124,14 @@ export default async function handler(req, res) {
 
         // Prepare last action data
         let lastActionData = null;
-        if (primaryInfo.history && Array.isArray(primaryInfo.history) && primaryInfo.history.length > 0) {
+        if (primaryInfo && primaryInfo.history && Array.isArray(primaryInfo.history) && primaryInfo.history.length > 0) {
           const mostRecentAction = primaryInfo.history[primaryInfo.history.length - 1];
-          lastActionData = `${mostRecentAction.date}: ${mostRecentAction.action}`;
-        } else if (primaryInfo.last_action) {
+          if (mostRecentAction && mostRecentAction.date && mostRecentAction.action) {
+            lastActionData = `${mostRecentAction.date}: ${mostRecentAction.action}`;
+          }
+        } else if (primaryInfo && primaryInfo.last_action) {
           lastActionData = primaryInfo.last_action;
-        } else if (primaryInfo.status_date) {
+        } else if (primaryInfo && primaryInfo.status_date) {
           lastActionData = `Status updated: ${primaryInfo.status_date}`;
         }
 
