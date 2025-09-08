@@ -1,14 +1,13 @@
 export default async function handler(req, res) {
   try {
     const token = process.env.WEBFLOW_API_TOKEN;
-    const siteId = process.env.WEBFLOW_SITE_ID;
     
-    if (!token || !siteId) {
-      return res.json({ error: 'Missing environment variables' });
+    if (!token) {
+      return res.json({ error: 'Missing API token' });
     }
     
-    // Test basic Webflow API connection
-    const response = await fetch(`https://api.webflow.com/sites/${siteId}`, {
+    // Test user endpoint instead of site
+    const response = await fetch('https://api.webflow.com/user', {
       headers: {
         'Authorization': `Bearer ${token}`,
         'accept-version': '1.0.0'
@@ -21,7 +20,7 @@ export default async function handler(req, res) {
       success: response.ok,
       status: response.status,
       webflowResponse: data,
-      message: response.ok ? 'Webflow connection successful' : 'Webflow API error'
+      message: response.ok ? 'User endpoint successful' : 'User endpoint failed'
     });
     
   } catch (error) {
