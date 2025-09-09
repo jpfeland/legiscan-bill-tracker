@@ -400,11 +400,9 @@ export default async function handler(req, res) {
 
         toPublish.push(bill.id);
 
-        // Get status text for both chambers for logging
-        const houseStatusText = houseNumber ? Object.keys(houseStatusMapping).find(k => 
-          houseStatusMapping[k] === updateData.fieldData["house-file-status"]) : null;
-        const senateStatusText = senateNumber ? Object.keys(senateStatusMapping).find(k => 
-          senateStatusMapping[k] === updateData.fieldData["senate-file-status"]) : null;
+        // Get status text for logging using the computed keys
+        const houseStatusText = houseNumber ? computeStatusKey(houseInfo, { state, legislativeYear }) : null;
+        const senateStatusText = senateNumber ? computeStatusKey(senateInfo, { state, legislativeYear }) : null;
         
         results.updated++;
         results.bills.push({
