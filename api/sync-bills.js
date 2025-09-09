@@ -131,9 +131,10 @@ export default async function handler(req, res) {
       if (!list.length) return "";
 
       const sponsorTypeRank = (typeId) => {
-        // Only include Primary Sponsors (rank 0), exclude all others
-        if (typeId === 1) return 0; // Primary Sponsor only
-        return 999; // Exclude Co-Sponsors (2), Joint Sponsors (3), and Generic (0)
+        // Include Primary Sponsors (rank 0) and Joint Sponsors (rank 1)
+        if (typeId === 1) return 0; // Primary Sponsor (highest priority)
+        if (typeId === 3) return 1; // Joint Sponsor
+        return 999; // Exclude Co-Sponsors (2) and Generic (0)
       };
 
       const prefixFor = (s) => {
@@ -162,10 +163,13 @@ export default async function handler(req, res) {
         return "";
       };
 
-      // Filter to only include Primary Sponsors (rank 0)
-      const filteredList = list.filter(s => sponsorTypeRank(s?.sponsor_type_id) === 0);
+      // Filter to include Primary Sponsors (rank 0) and Joint Sponsors (rank 1)
+      const filteredList = list.filter(s => sponsorTypeRank(s?.sponsor_type_id) < 999);
 
-      filteredList.sort((a, b) => (a?.name || "").localeCompare(b?.name || ""));
+      filteredList.sort(
+        (a, b) => sponsorTypeRank(a?.sponsor_type_id) - sponsorTypeRank(b?.sponsor_type_id) ||
+                  (a?.name || "").localeCompare(b?.name || "")
+      );
 
       const seen = new Set();
       const items = filteredList.filter((s) => {
