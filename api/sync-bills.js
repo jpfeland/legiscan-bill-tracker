@@ -293,6 +293,17 @@ export default async function handler(req, res) {
       // Use Webflow option ID to determine state, with fallback to bill number pattern
       const state = JURISDICTION_MAP[jurisdictionId] || inferStateFromNumber(houseNumber, senateNumber);
 
+      // Helper to create URL-friendly slug
+      const createSlug = (text) => {
+        return text
+          .toLowerCase()
+          .replace(/[^a-z0-9\s-]/g, '') // Remove special chars except spaces and hyphens
+          .replace(/\s+/g, '-')         // Replace spaces with hyphens
+          .replace(/-+/g, '-')          // Replace multiple hyphens with single
+          .replace(/^-|-$/g, '')        // Remove leading/trailing hyphens
+          .substring(0, 80);            // Limit length for headline part
+      };
+
       try {
         const primaryNumber = houseNumber || senateNumber;
         const primaryInfo = await fetchLegiScanBill({ state, billNumber: primaryNumber, year: legislativeYear });
