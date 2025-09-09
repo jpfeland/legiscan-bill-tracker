@@ -337,11 +337,13 @@ export default async function handler(req, res) {
         // Status - now separate for House and Senate
         if (houseNumber && houseInfo) {
           const houseStatusId = computeStatus(houseInfo, { state, legislativeYear, chamber: 'house' });
+          console.log(`House status for ${houseNumber}: ${houseStatusId}`);
           if (houseStatusId) updateData.fieldData["house-file-status"] = houseStatusId;
         }
         
         if (senateNumber && senateInfo) {
           const senateStatusId = computeStatus(senateInfo, { state, legislativeYear, chamber: 'senate' });
+          console.log(`Senate status for ${senateNumber}: ${senateStatusId}`);
           if (senateStatusId) updateData.fieldData["senate-file-status"] = senateStatusId;
         }
 
