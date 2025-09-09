@@ -53,7 +53,21 @@ export default async function handler(req, res) {
     }
 
     async function fetchLegiScanBill({ state, billNumber, year }) {
-      let url = `https://api.legiscan.com/?key=${encodeURIComponent(LEGISCAN_API_KEY)}&op=getBill&state=${encodeURIComponent(state)}&bill=${encodeURIComponent(billNumber)}`;
+      // Convert federal bill numbers to LegiScan format
+      let searchNumber = billNumber;
+      if (state === "US") {
+        // LegiScan uses HB for House Bills (H.R.) and HR for House Resolutions (H.Res.)
+        // Since most are bills, try HB first for HR numbers
+        if (/^HR\d+$/i.test(billNumber)) {
+          searchNumber = billNumber.replace(/^HR/i, "HB");
+        }
+        // Convert Senate numbers: S -> SB, SR stays SR
+        else if (/^S\d+$/i.test(billNumber)) {
+          searchNumber = billNumber.replace(/^S/i, "SB");
+        }
+      }
+
+      let url = `https://api.legiscan.com/?key=${encodeURIComponent(LEGISCAN_API_KEY)}&op=getBill&state=${encodeURIComponent(state)}&bill=${encodeURIComponent(searchNumber)}`;
       if (year) url += `&year=${encodeURIComponent(year)}`;
       const r = await fetch(url);
       const data = await r.json();
