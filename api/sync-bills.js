@@ -172,7 +172,7 @@ export default async function handler(req, res) {
       return fetch(u, {
         method: "POST",
         headers: { Authorization: `Bearer ${WEBFLOW_TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ item_ids: itemIds }),
+        body: JSON.stringify({ itemIds }), // ← Fixed: camelCase instead of item_ids
       });
     }
 
@@ -280,15 +280,29 @@ export default async function handler(req, res) {
     }
 
     // --- Publish to LIVE in batches ----------------------------------------
+    let publishedOk = 0; // Track actual successful publishes
     const CHUNK = 100;
     for (let i = 0; i < toPublish.length; i += CHUNK) {
       const slice = toPublish.slice(i, i + CHUNK);
       const pub = await publishItems(slice);
       const body = await pub.json().catch(() => ({}));
+
       if (!pub.ok) {
-        results.errors.push({ error: `Publish failed: ${body.message || pub.statusText}`, affectedItems: slice });
+        results.errors.push({
+          error: `Publish failed: ${body.message || body.error || pub.statusText}`,
+          details: body,
+          affectedItems: slice,
+        });
       } else {
-        results.bills.push({ publishedCount: Array.isArray(body.item_ids) ? body.item_ids.length : slice.length });
+        // Handle different possible response formats from Webflow
+        const ids = Array.isArray(body.itemIds) ? body.itemIds
+                 : Array.isArray(body.items) ? body.items.map(x => x.id)
+                 : [];
+        publishedOk += ids.length;
+        results.bills.push({ 
+          publishedCount: ids.length, 
+          itemIds: ids.length ? ids : slice 
+        });
       }
       await sleep(700);
     }
@@ -301,7 +315,7 @@ export default async function handler(req, res) {
         processed: results.processed,
         updated: results.updated,
         skipped: results.skipped,
-        published: toPublish.length,
+        published: publishedOk, // ← Now reports actual successful publishes
         errors: results.errors.length
       },
       updatedBills: results.bills,
