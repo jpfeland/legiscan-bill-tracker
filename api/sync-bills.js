@@ -92,19 +92,70 @@ export default async function handler(req, res) {
         return dateText ? `<p><strong>${esc(dateText)}</strong><br>${esc(a)}</p>` : `<p>${esc(a)}</p>`;
       }
 
-      // newest first, show all history
       hist.sort((a,b) => new Date(b.date || b.action_date || 0) - new Date(a.date || a.action_date || 0));
       const rows = hist.map((it, index) => {
         const d = fmt(it.date || it.action_date || '');
         const actionText = it.action || '';
-        
         const html = d ? `<p><strong>${esc(d)}</strong><br>${esc(actionText)}</p>` : `<p>${esc(actionText)}</p>`;
-        
-        // Add spacing between entries, but not after the last one
         return index < hist.length - 1 ? html + '<br>' : html;
       }).join('');
 
       return rows;
+    }
+
+    // --- Sponsors helper with Rep./Sen. prefix ------------------------------
+    function buildSponsorsHtml(info, { state = "MN" } = {}) {
+      const list = Array.isArray(info?.sponsors) ? [...info.sponsors] : [];
+      if (!list.length) return "";
+
+      const norm = (s = "") => s.toLowerCase().trim();
+      const roleRank = (r) => {
+        const x = norm(r);
+        if (/^(author|primary sponsor|chief author|lead author)$/.test(x)) return 0;
+        if (/^(sponsor|chief sponsor)$/.test(x)) return 1;
+        if (/^(co[-\s]?author|co[-\s]?sponsor)$/.test(x)) return 2;
+        return 3;
+      };
+
+      const prefixFor = (s) => {
+        const ch = String(s?.chamber ?? s?.chamber_id ?? s?.type ?? "").toLowerCase();
+        if (ch === "s" || ch === "senate" || ch === "upper") return "Sen.";
+        if (ch === "h" || ch === "house"  || ch === "lower") return "Rep.";
+
+        const dist = String(s?.district ?? "");
+        if (state === "MN") {
+          if (/^\d{1,3}[A-B]$/i.test(dist)) return "Rep.";
+          if (/^\d{1,3}$/.test(dist))       return "Sen.";
+        }
+        if (/senate|senator/i.test(s?.role || "")) return "Sen.";
+        if (/house|represent/i.test(s?.role || "")) return "Rep.";
+        return "";
+      };
+
+      list.sort(
+        (a, b) => roleRank(a?.role) - roleRank(b?.role) ||
+                  (a?.name || "").localeCompare(b?.name || "")
+      );
+
+      const seen = new Set();
+      const items = list.filter((s) => {
+        const key = [s?.name, norm(s?.role), s?.party, s?.district].join("|");
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      return items.map((s, i) => {
+        const pref  = prefixFor(s);
+        const name  = s?.name ? esc(s.name) : "";
+        const party = s?.party ? ` (${esc(String(s.party))})` : "";
+        const bits  = [];
+        if (s?.district) bits.push(`Dist. ${esc(String(s.district))}`);
+        if (s?.role)     bits.push(esc(s.role));
+        const meta  = bits.join(", ");
+        const line  = meta ? `${pref} ${name}${party} — ${meta}`.trim() : `${pref} ${name}${party}`.trim();
+        return i < items.length - 1 ? `<p>${line}</p><br>` : `<p>${line}</p>`;
+      }).join("");
     }
 
     async function patchStaging(itemId, data) {
@@ -121,7 +172,7 @@ export default async function handler(req, res) {
       return fetch(u, {
         method: "POST",
         headers: { Authorization: `Bearer ${WEBFLOW_TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ item_ids: itemIds }), // snake_case
+        body: JSON.stringify({ item_ids: itemIds }),
       });
     }
 
@@ -155,32 +206,35 @@ export default async function handler(req, res) {
         const primaryInfo = await fetchLegiScanBill({ state, billNumber: primaryNumber, year: legislativeYear });
 
         let houseInfo = null, senateInfo = null;
-        if (houseNumber) houseInfo = primaryNumber === houseNumber ? primaryInfo : await (sleep(150), fetchLegiScanBill({ state, billNumber: houseNumber, year: legislativeYear }));
-        if (senateNumber) senateInfo = primaryNumber === senateNumber ? primaryInfo : await (sleep(150), fetchLegiScanBill({ state, billNumber: senateNumber, year: legislativeYear }));
+        if (houseNumber && primaryNumber !== houseNumber) {
+          await sleep(150);
+          houseInfo = await fetchLegiScanBill({ state, billNumber: houseNumber, year: legislativeYear });
+        } else {
+          houseInfo = primaryInfo;
+        }
+        if (senateNumber && primaryNumber !== senateNumber) {
+          await sleep(150);
+          senateInfo = await fetchLegiScanBill({ state, billNumber: senateNumber, year: legislativeYear });
+        } else {
+          senateInfo = primaryInfo;
+        }
 
         const updateData = { fieldData: {} };
-
-        // Fix misfiled numbers
         Object.assign(updateData.fieldData, corrections);
 
-        // Headline (only if placeholder)
         if (isPlaceholderName(currentName, primaryNumber)) {
           updateData.fieldData["name"] = primaryInfo.title || primaryNumber;
         }
 
-        // Status (Option ID)
         const wfStatusId = computeStatus(primaryInfo, { state, legislativeYear });
         if (wfStatusId) updateData.fieldData["bill-status"] = wfStatusId;
 
-        // Timeline - always update this field
         const timelineHtml = buildTimelineHtml(primaryInfo);
-        updateData.fieldData["timeline"] = timelineHtml || ""; // Always set timeline, even if empty
+        updateData.fieldData["timeline"] = timelineHtml || "";
 
-        // Sponsors - always update this field
-        const sponsorsHtml = buildSponsorsHtml(primaryInfo);
-        updateData.fieldData["sponsors"] = sponsorsHtml || ""; // Always set sponsors, even if empty
+        const sponsorsHtml = buildSponsorsHtml(primaryInfo, { state });
+        updateData.fieldData["sponsors"] = sponsorsHtml || "";
 
-        // Links
         if (houseNumber) {
           const link = pickBestTextUrl(houseInfo);
           if (link) updateData.fieldData["house-file-link"] = link;
@@ -198,7 +252,6 @@ export default async function handler(req, res) {
           results.skipped++; results.skipReasons.push({ id: bill.id, reason: "No changes to apply" }); continue;
         }
 
-        // PATCH staging
         const staging = await patchStaging(bill.id, updateData);
         if (!staging.ok) {
           const e = await staging.json().catch(() => ({}));
@@ -206,7 +259,6 @@ export default async function handler(req, res) {
           continue;
         }
 
-        // Queue for publish
         toPublish.push(bill.id);
 
         const statusText = Object.keys(statusMapping).find(k => statusMapping[k] === wfStatusId);
