@@ -88,7 +88,7 @@ export default async function handler(req, res) {
         const a = info?.last_action || 'No recent actions recorded';
         if (!d && !a) return '';
         const dateText = fmt(d);
-        return `<h4>Last Action</h4><p>${dateText ? `<strong>${esc(dateText)}</strong><br>${esc(a)}` : esc(a)}</p>`;
+        return dateText ? `<p><strong>${esc(dateText)}</strong></p><p>${esc(a)}</p>` : `<p>${esc(a)}</p>`;
       }
 
       // newest first, cap to 12
@@ -102,14 +102,14 @@ export default async function handler(req, res) {
         
         if (isLatest) {
           // Latest entry: normal styling
-          return d ? `<p><strong>${esc(d)}</strong><br>${esc(actionText)}</p>` : `<p>${esc(actionText)}</p>`;
+          return d ? `<p><strong>${esc(d)}</strong></p><p>${esc(actionText)}</p>` : `<p>${esc(actionText)}</p>`;
         } else {
           // Regular entries: p2 class and gray color
-          return d ? `<p class="p2" style="color: var(--Gray-03);"><strong>${esc(d)}</strong><br>${esc(actionText)}</p>` : `<p class="p2" style="color: var(--Gray-03);">${esc(actionText)}</p>`;
+          return d ? `<p class="p2" style="color: var(--Gray-03);"><strong>${esc(d)}</strong></p><p class="p2" style="color: var(--Gray-03);">${esc(actionText)}</p>` : `<p class="p2" style="color: var(--Gray-03);">${esc(actionText)}</p>`;
         }
       }).join('');
 
-      return `<h4>Last Action</h4>${rows}`;
+      return rows;
     }
 
     async function patchItem(itemId, data, { live } = {}) {
