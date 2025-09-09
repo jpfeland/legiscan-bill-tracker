@@ -66,10 +66,13 @@ export default async function handler(req, res) {
       const texts = Array.isArray(info.texts) ? info.texts.slice() : [];
       if (texts.length) {
         texts.sort((a, b) => new Date(b.date || b.action_date || 0) - new Date(a.date || a.action_date || 0));
-        const pdf = texts.find(t => /pdf/i.test(t?.mime || "") || /\.pdf($|\?)/i.test(t?.url || ""));
-        if (pdf) return pdf.url || pdf.state_link || null;
+        
+        // Prioritize state_link (often direct PDF) over LegiScan URL
+        const pdf = texts.find(t => /pdf/i.test(t?.mime || "") || /\.pdf($|\?)/i.test(t?.state_link || t?.url || ""));
+        if (pdf) return pdf.state_link || pdf.url || null;
+        
         const first = texts[0];
-        if (first) return first.url || first.state_link || null;
+        if (first) return first.state_link || first.url || null;
       }
       return info.state_link || info.url || null;
     }
