@@ -3,16 +3,17 @@ export default async function handler(req, res) {
   try {
     const WEBFLOW_TOKEN = process.env.WEBFLOW_API_TOKEN;
     const LEGISCAN_API_KEY = process.env.LEGISCAN_API_KEY;
-    const COLLECTION_ID = process.env.WEBFLOW_BILLS_COLLECTION_ID;
+    const COLLECTION_ID = process.env.WEBFLOW_BILLS_COLLECTION_ID; // required
 
     if (!WEBFLOW_TOKEN || !LEGISCAN_API_KEY || !COLLECTION_ID) {
       return res.status(400).json({ success: false, error: "Missing environment variables" });
     }
 
     const results = { timestamp: new Date().toISOString(), processed: 0, updated: 0, skipped: 0, skipReasons: [], errors: [], bills: [] };
+    const toPublish = [];
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-    // ---- status option IDs in your Webflow collection
+    // --- Webflow Option IDs (Bill Status)
     const statusMapping = {
       Active: "960eac22ecc554a51654e69b9252ae80",
       Tabled: "7febd1eb78c2ea008f4f84c13afec8de",
@@ -20,6 +21,7 @@ export default async function handler(req, res) {
       Passed: "d6de8b3f124dbc8e474cf520bfe7e9ca",
     };
 
+    // --- Helpers ------------------------------------------------------------
     const computeStatus = (billInfo, { state, legislativeYear }) => {
       const code = billInfo.status;
       if (code === 4) return statusMapping.Passed;
@@ -72,7 +74,6 @@ export default async function handler(req, res) {
       return info.state_link || info.url || null;
     }
 
-    // --- timeline helpers
     const esc = (s='') => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const fmt = (d) => {
       if (!d) return '';
@@ -107,23 +108,32 @@ export default async function handler(req, res) {
       return rows;
     }
 
-    async function patchItem(itemId, data, { live } = {}) {
-      const u = new URL(`https://api.webflow.com/v2/collections/${COLLECTION_ID}/items/${itemId}`);
-      if (live) u.searchParams.set("live", "true"); // push to published
-      return fetch(u.toString(), {
+    async function patchStaging(itemId, data) {
+      const u = `https://api.webflow.com/v2/collections/${COLLECTION_ID}/items/${itemId}`;
+      return fetch(u, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${WEBFLOW_TOKEN}`, "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
     }
 
-    // Fetch all items
+    async function publishItems(itemIds) {
+      const u = `https://api.webflow.com/v2/collections/${COLLECTION_ID}/items/publish`;
+      return fetch(u, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${WEBFLOW_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ item_ids: itemIds }), // snake_case
+      });
+    }
+
+    // --- Fetch items --------------------------------------------------------
     const listRes = await fetch(`https://api.webflow.com/v2/collections/${COLLECTION_ID}/items`, {
       headers: { Authorization: `Bearer ${WEBFLOW_TOKEN}` },
     });
     if (!listRes.ok) throw new Error(`Webflow API error: ${listRes.status}`);
     const bills = (await listRes.json()).items || [];
 
+    // --- Process items ------------------------------------------------------
     for (const bill of bills) {
       results.processed++;
 
@@ -163,7 +173,7 @@ export default async function handler(req, res) {
         const wfStatusId = computeStatus(primaryInfo, { state, legislativeYear });
         if (wfStatusId) updateData.fieldData["bill-status"] = wfStatusId;
 
-        // Timeline HTML - always update this field
+        // Timeline - always update this field
         const timelineHtml = buildTimelineHtml(primaryInfo);
         updateData.fieldData["timeline"] = timelineHtml || ""; // Always set timeline, even if empty
 
@@ -185,22 +195,16 @@ export default async function handler(req, res) {
           results.skipped++; results.skipReasons.push({ id: bill.id, reason: "No changes to apply" }); continue;
         }
 
-        // Patch Designer/Editor (staging)
-        const staging = await patchItem(bill.id, updateData, { live: false });
+        // PATCH staging
+        const staging = await patchStaging(bill.id, updateData);
         if (!staging.ok) {
           const e = await staging.json().catch(() => ({}));
           results.errors.push({ billId: bill.id, error: `Staging update failed: ${e.message || staging.statusText}` });
           continue;
         }
 
-        // Patch Live
-        await sleep(120);
-        const live = await patchItem(bill.id, updateData, { live: true });
-        if (!live.ok) {
-          const e = await live.json().catch(() => ({}));
-          results.errors.push({ billId: bill.id, error: `Live update failed: ${e.message || live.statusText}` });
-          continue;
-        }
+        // Queue for publish
+        toPublish.push(bill.id);
 
         const statusText = Object.keys(statusMapping).find(k => statusMapping[k] === wfStatusId);
         results.updated++;
@@ -209,16 +213,29 @@ export default async function handler(req, res) {
           houseNumber,
           senateNumber,
           headline: updateData.fieldData.name || currentName,
-          status: "updated",
+          status: "staged",
           setStatus: statusText,
           timelinePreview: timelineHtml ? "Timeline generated" : "No timeline data",
-          timelineDebug: timelineHtml ? timelineHtml.substring(0, 300) + "..." : null
         });
 
-        await sleep(200);
+        await sleep(120);
       } catch (err) {
         results.errors.push({ billId: bill.id, error: err.message });
       }
+    }
+
+    // --- Publish to LIVE in batches ----------------------------------------
+    const CHUNK = 100;
+    for (let i = 0; i < toPublish.length; i += CHUNK) {
+      const slice = toPublish.slice(i, i + CHUNK);
+      const pub = await publishItems(slice);
+      const body = await pub.json().catch(() => ({}));
+      if (!pub.ok) {
+        results.errors.push({ error: `Publish failed: ${body.message || pub.statusText}`, affectedItems: slice });
+      } else {
+        results.bills.push({ publishedCount: Array.isArray(body.item_ids) ? body.item_ids.length : slice.length });
+      }
+      await sleep(700);
     }
 
     return res.status(200).json({
@@ -229,6 +246,7 @@ export default async function handler(req, res) {
         processed: results.processed,
         updated: results.updated,
         skipped: results.skipped,
+        published: toPublish.length,
         errors: results.errors.length
       },
       updatedBills: results.bills,
