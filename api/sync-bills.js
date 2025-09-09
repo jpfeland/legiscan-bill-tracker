@@ -93,11 +93,33 @@ export default async function handler(req, res) {
       }
 
       hist.sort((a,b) => new Date(b.date || b.action_date || 0) - new Date(a.date || a.action_date || 0));
-      const rows = hist.map((it, index) => {
-        const d = fmt(it.date || it.action_date || '');
-        const actionText = it.action || '';
-        const html = d ? `<p><strong>${esc(d)}</strong><br>${esc(actionText)}</p>` : `<p>${esc(actionText)}</p>`;
-        return index < hist.length - 1 ? html + '<br>' : html;
+      
+      // Group actions by date
+      const groupedByDate = new Map();
+      hist.forEach(item => {
+        const dateKey = item.date || item.action_date || '';
+        const action = item.action || '';
+        if (!groupedByDate.has(dateKey)) {
+          groupedByDate.set(dateKey, []);
+        }
+        groupedByDate.get(dateKey).push(action);
+      });
+
+      // Convert to HTML with grouped dates
+      const rows = Array.from(groupedByDate.entries()).map((entry, index) => {
+        const [dateKey, actions] = entry;
+        const dateText = fmt(dateKey);
+        
+        if (actions.length === 1) {
+          // Single action: keep original format
+          const html = dateText ? `<p><strong>${esc(dateText)}</strong><br>${esc(actions[0])}</p>` : `<p>${esc(actions[0])}</p>`;
+          return index < groupedByDate.size - 1 ? html + '<br>' : html;
+        } else {
+          // Multiple actions: use bullet list
+          const actionItems = actions.map(action => `• ${esc(action)}`).join('<br>');
+          const html = dateText ? `<p><strong>${esc(dateText)}</strong><br>${actionItems}</p>` : `<p>${actionItems}</p>`;
+          return index < groupedByDate.size - 1 ? html + '<br>' : html;
+        }
       }).join('');
 
       return rows;
@@ -109,12 +131,9 @@ export default async function handler(req, res) {
       if (!list.length) return "";
 
       const sponsorTypeRank = (typeId) => {
-        // Use LegiScan's sponsor_type_id for more reliable filtering
-        // 1 = Primary Sponsor, 2 = Co-Sponsor, 3 = Joint Sponsor, 0 = Generic (exclude)
-        if (typeId === 1) return 0; // Primary Sponsor (highest priority)
-        if (typeId === 3) return 1; // Joint Sponsor  
-        if (typeId === 2) return 2; // Co-Sponsor
-        return 999; // Exclude Generic (0) and any other types
+        // Only include Primary Sponsors (rank 0), exclude all others
+        if (typeId === 1) return 0; // Primary Sponsor only
+        return 999; // Exclude Co-Sponsors (2), Joint Sponsors (3), and Generic (0)
       };
 
       const prefixFor = (s) => {
@@ -143,13 +162,10 @@ export default async function handler(req, res) {
         return "";
       };
 
-      // Filter to only include Primary, Joint, and Co-Sponsors (exclude Generic)
-      const filteredList = list.filter(s => sponsorTypeRank(s?.sponsor_type_id) < 999);
+      // Filter to only include Primary Sponsors (rank 0)
+      const filteredList = list.filter(s => sponsorTypeRank(s?.sponsor_type_id) === 0);
 
-      filteredList.sort(
-        (a, b) => sponsorTypeRank(a?.sponsor_type_id) - sponsorTypeRank(b?.sponsor_type_id) ||
-                  (a?.name || "").localeCompare(b?.name || "")
-      );
+      filteredList.sort((a, b) => (a?.name || "").localeCompare(b?.name || ""));
 
       const seen = new Set();
       const items = filteredList.filter((s) => {
