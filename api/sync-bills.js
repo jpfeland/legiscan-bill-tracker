@@ -13,36 +13,61 @@ export default async function handler(req, res) {
     const toPublish = [];
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-    // --- Webflow Option IDs (Bill Status)
-    const statusMapping = {
-      Active: "960eac22ecc554a51654e69b9252ae80",
-      Tabled: "7febd1eb78c2ea008f4f84c13afec8de",
-      Failed: "e15117e822e62b30d4c8a74770630f01",
-      Passed: "d6de8b3f124dbc8e474cf520bfe7e9ca",
-    };
+    // --- Fetch collection schema and build option maps dynamically
+    async function getOptionIdMaps() {
+      const u = `https://api.webflow.com/v2/collections/${COLLECTION_ID}`;
+      const r = await fetch(u, { headers: { Authorization: `Bearer ${WEBFLOW_TOKEN}` } });
+      if (!r.ok) throw new Error(`Failed to load collection schema: ${r.status}`);
+      const col = await r.json();
 
-    // --- Webflow Option IDs (Jurisdiction)
+      const bySlug = Object.fromEntries(
+        (col.fields || []).map(f => [f.slug, f])
+      );
+
+      function makeMap(slug, names) {
+        const f = bySlug[slug];
+        if (!f) throw new Error(`Field not found: ${slug}`);
+        if (f.type !== "Option") throw new Error(`Field ${slug} is not Option type`);
+        const opts = (f.validations?.options) || [];
+        const map = {};
+        names.forEach(name => {
+          const opt = opts.find(o => o.name.toLowerCase() === name.toLowerCase());
+          if (!opt) throw new Error(`Option "${name}" not found on ${slug}`);
+          map[name] = opt.id;
+        });
+        return map;
+      }
+
+      // Build maps for each field independently
+      return {
+        houseStatusIds: makeMap("house-file-status", ["Active","Tabled","Failed","Passed"]),
+        senateStatusIds: makeMap("senate-file-status", ["Active","Tabled","Failed","Passed"]),
+        jurisdictionIds: makeMap("jurisdiction", ["Minnesota","Federal"]),
+      };
+    }
+
+    // --- Webflow Option IDs (Jurisdiction) - Keep this static since it's simple
     const JURISDICTION_MAP = {
       "3b566a1d5376e736be044c288bb44017": "MN", // Minnesota
       "87a300e03b5ad785b240294477aaaf35": "US", // Federal
     };
 
     // --- Helpers ------------------------------------------------------------
-    const computeStatus = (billInfo, { state, legislativeYear }) => {
+    function computeStatusKey(billInfo, { state, legislativeYear }) {
       const code = billInfo.status;
-      if (code === 4) return statusMapping.Passed;
-      if (code === 5 || code === 6) return statusMapping.Failed;
+      if (code === 4) return "Passed";
+      if (code === 5 || code === 6) return "Failed";
 
       const year = Number(legislativeYear);
       const cutoff = state === "MN" && year ? new Date(year, 5, 1) : null; // Jun 1
       const la = (billInfo.last_action || "").toLowerCase();
-      const looksDead = /tabled|laid on table|postponed|indefinitely|sine die|died|withdrawn|stricken/.test(la);
+      const looksDead = /tabled|laid on the? table|postponed|indefinitely|sine die|died|withdrawn|stricken/.test(la);
 
-      if (looksDead) return statusMapping.Tabled;
-      if (cutoff && new Date() >= cutoff && (code === 1 || code === 2 || code === 3)) return statusMapping.Tabled;
+      if (looksDead) return "Tabled";
+      if (cutoff && new Date() >= cutoff && (code === 1 || code === 2 || code === 3)) return "Tabled";
 
-      return statusMapping.Active;
-    };
+      return "Active";
+    }
 
     const isPlaceholderName = (name, billNum) => {
       const n = (name || "").trim();
@@ -269,6 +294,9 @@ export default async function handler(req, res) {
     if (!listRes.ok) throw new Error(`Webflow API error: ${listRes.status}`);
     const bills = (await listRes.json()).items || [];
 
+    // Get dynamic option ID mappings from schema
+    const { houseStatusIds, senateStatusIds, jurisdictionIds } = await getOptionIdMaps();
+
     // --- Process items ------------------------------------------------------
     for (const bill of bills) {
       results.processed++;
@@ -322,7 +350,7 @@ export default async function handler(req, res) {
           senateInfo = primaryInfo;
         }
 
-        // FIXED: Build update payload with proper structure
+        // Build update payload with proper structure
         const updateData = { fieldData: {} };
         
         // Apply corrections to bill numbers
@@ -334,17 +362,15 @@ export default async function handler(req, res) {
           updateData.fieldData["name"] = billTitle;
         }
 
-        // Status - now separate for House and Senate
+        // Status - now separate for House and Senate using dynamic IDs
         if (houseNumber && houseInfo) {
-          const houseStatusId = computeStatus(houseInfo, { state, legislativeYear, chamber: 'house' });
-          console.log(`House status for ${houseNumber}: ${houseStatusId}`);
-          if (houseStatusId) updateData.fieldData["house-file-status"] = houseStatusId;
+          const statusKey = computeStatusKey(houseInfo, { state, legislativeYear });
+          updateData.fieldData["house-file-status"] = houseStatusIds[statusKey];
         }
         
         if (senateNumber && senateInfo) {
-          const senateStatusId = computeStatus(senateInfo, { state, legislativeYear, chamber: 'senate' });
-          console.log(`Senate status for ${senateNumber}: ${senateStatusId}`);
-          if (senateStatusId) updateData.fieldData["senate-file-status"] = senateStatusId;
+          const statusKey = computeStatusKey(senateInfo, { state, legislativeYear });
+          updateData.fieldData["senate-file-status"] = senateStatusIds[statusKey];
         }
 
         // Rich text fields
@@ -354,27 +380,27 @@ export default async function handler(req, res) {
         const sponsorsHtml = buildSponsorsHtml(primaryInfo, { state });
         updateData.fieldData["sponsors"] = sponsorsHtml || "";
 
-        // FIXED: URL fields - use null to clear, not empty string
+        // URL fields - use null to clear, not empty string
         if (houseNumber) {
           const link = pickBestTextUrl(houseInfo);
           if (link) updateData.fieldData["house-file-link"] = link;
         } else if (corrections["house-file-number"] === "") {
-          updateData.fieldData["house-file-link"] = null; // ← FIXED: was ""
+          updateData.fieldData["house-file-link"] = null;
         }
         
         if (senateNumber) {
           const link = pickBestTextUrl(senateInfo);
           if (link) updateData.fieldData["senate-file-link"] = link;
         } else if (corrections["senate-file-number"] === "") {
-          updateData.fieldData["senate-file-link"] = null; // ← FIXED: was ""
+          updateData.fieldData["senate-file-link"] = null;
         }
 
-        // FIXED: Slug must be TOP-LEVEL, not in fieldData
+        // Slug must be TOP-LEVEL, not in fieldData
         if (legislativeYear && billTitle) {
           const billNumbers = [houseNumber, senateNumber].filter(Boolean).join('-').toLowerCase();
           const headlineSlug = createSlug(billTitle);
           const structuredSlug = `${legislativeYear}--${billNumbers}--${headlineSlug}`;
-          updateData.slug = structuredSlug; // ← FIXED: top-level property
+          updateData.slug = structuredSlug;
         }
 
         if (!Object.keys(updateData.fieldData).length && !updateData.slug) {
@@ -385,7 +411,6 @@ export default async function handler(req, res) {
 
         const staging = await patchStaging(bill.id, updateData);
         if (!staging.ok) {
-          // FIXED: Enhanced error logging
           const body = await staging.json().catch(() => ({}));
           results.errors.push({
             billId: bill.id,
@@ -393,7 +418,7 @@ export default async function handler(req, res) {
             status: staging.status,
             message: body.message || staging.statusText,
             details: body.details || body,
-            sentData: updateData // Include what we tried to send for debugging
+            sentData: updateData
           });
           continue;
         }
