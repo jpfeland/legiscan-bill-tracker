@@ -334,9 +334,16 @@ export default async function handler(req, res) {
           updateData.fieldData["name"] = billTitle;
         }
 
-        // Status
-        const wfStatusId = computeStatus(primaryInfo, { state, legislativeYear });
-        if (wfStatusId) updateData.fieldData["bill-status"] = wfStatusId;
+        // Status - now separate for House and Senate
+        if (houseNumber && houseInfo) {
+          const houseStatusId = computeStatus(houseInfo, { state, legislativeYear, chamber: 'house' });
+          if (houseStatusId) updateData.fieldData["house-file-status"] = houseStatusId;
+        }
+        
+        if (senateNumber && senateInfo) {
+          const senateStatusId = computeStatus(senateInfo, { state, legislativeYear, chamber: 'senate' });
+          if (senateStatusId) updateData.fieldData["senate-file-status"] = senateStatusId;
+        }
 
         // Rich text fields
         const timelineHtml = buildTimelineHtml(primaryInfo);
