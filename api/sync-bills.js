@@ -233,6 +233,17 @@ export default async function handler(req, res) {
       }).join("");
     }
 
+    // Helper to create URL-friendly slug
+    const createSlug = (text) => {
+      return text
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, '') // Remove special chars except spaces and hyphens
+        .replace(/\s+/g, '-')         // Replace spaces with hyphens
+        .replace(/-+/g, '-')          // Replace multiple hyphens with single
+        .replace(/^-|-$/g, '')        // Remove leading/trailing hyphens
+        .substring(0, 80);            // Limit length for headline part
+    };
+
     async function patchStaging(itemId, data) {
       const u = `https://api.webflow.com/v2/collections/${COLLECTION_ID}/items/${itemId}`;
       return fetch(u, {
@@ -247,7 +258,7 @@ export default async function handler(req, res) {
       return fetch(u, {
         method: "POST",
         headers: { Authorization: `Bearer ${WEBFLOW_TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ itemIds }), // ← Fixed: camelCase instead of item_ids
+        body: JSON.stringify({ itemIds }),
       });
     }
 
@@ -293,17 +304,6 @@ export default async function handler(req, res) {
       // Use Webflow option ID to determine state, with fallback to bill number pattern
       const state = JURISDICTION_MAP[jurisdictionId] || inferStateFromNumber(houseNumber, senateNumber);
 
-      // Helper to create URL-friendly slug
-      const createSlug = (text) => {
-        return text
-          .toLowerCase()
-          .replace(/[^a-z0-9\s-]/g, '') // Remove special chars except spaces and hyphens
-          .replace(/\s+/g, '-')         // Replace spaces with hyphens
-          .replace(/-+/g, '-')          // Replace multiple hyphens with single
-          .replace(/^-|-$/g, '')        // Remove leading/trailing hyphens
-          .substring(0, 80);            // Limit length for headline part
-      };
-
       try {
         const primaryNumber = houseNumber || senateNumber;
         const primaryInfo = await fetchLegiScanBill({ state, billNumber: primaryNumber, year: legislativeYear });
@@ -322,18 +322,10 @@ export default async function handler(req, res) {
           senateInfo = primaryInfo;
         }
 
-        // Helper to create URL-friendly slug
-        const createSlug = (text) => {
-          return text
-            .toLowerCase()
-            .replace(/[^a-z0-9\s-]/g, '') // Remove special chars except spaces and hyphens
-            .replace(/\s+/g, '-')         // Replace spaces with hyphens
-            .replace(/-+/g, '-')          // Replace multiple hyphens with single
-            .replace(/^-|-$/g, '')        // Remove leading/trailing hyphens
-            .substring(0, 80);            // Limit length for headline part
-        };
-
+        // FIXED: Build update payload with proper structure
         const updateData = { fieldData: {} };
+        
+        // Apply corrections to bill numbers
         Object.assign(updateData.fieldData, corrections);
 
         let billTitle = currentName;
@@ -342,44 +334,58 @@ export default async function handler(req, res) {
           updateData.fieldData["name"] = billTitle;
         }
 
-        // Create structured slug: [year]--[bill-numbers]--[headline]
-        if (legislativeYear && billTitle) {
-          const billNumbers = [houseNumber, senateNumber].filter(Boolean).join('-').toLowerCase();
-          const headlineSlug = createSlug(billTitle);
-          const structuredSlug = `${legislativeYear}--${billNumbers}--${headlineSlug}`;
-          updateData.fieldData["slug"] = structuredSlug;
-        }
-
+        // Status
         const wfStatusId = computeStatus(primaryInfo, { state, legislativeYear });
         if (wfStatusId) updateData.fieldData["bill-status"] = wfStatusId;
 
+        // Rich text fields
         const timelineHtml = buildTimelineHtml(primaryInfo);
         updateData.fieldData["timeline"] = timelineHtml || "";
 
         const sponsorsHtml = buildSponsorsHtml(primaryInfo, { state });
         updateData.fieldData["sponsors"] = sponsorsHtml || "";
 
+        // FIXED: URL fields - use null to clear, not empty string
         if (houseNumber) {
           const link = pickBestTextUrl(houseInfo);
           if (link) updateData.fieldData["house-file-link"] = link;
         } else if (corrections["house-file-number"] === "") {
-          updateData.fieldData["house-file-link"] = "";
+          updateData.fieldData["house-file-link"] = null; // ← FIXED: was ""
         }
+        
         if (senateNumber) {
           const link = pickBestTextUrl(senateInfo);
           if (link) updateData.fieldData["senate-file-link"] = link;
         } else if (corrections["senate-file-number"] === "") {
-          updateData.fieldData["senate-file-link"] = "";
+          updateData.fieldData["senate-file-link"] = null; // ← FIXED: was ""
         }
 
-        if (!Object.keys(updateData.fieldData).length) {
-          results.skipped++; results.skipReasons.push({ id: bill.id, reason: "No changes to apply" }); continue;
+        // FIXED: Slug must be TOP-LEVEL, not in fieldData
+        if (legislativeYear && billTitle) {
+          const billNumbers = [houseNumber, senateNumber].filter(Boolean).join('-').toLowerCase();
+          const headlineSlug = createSlug(billTitle);
+          const structuredSlug = `${legislativeYear}--${billNumbers}--${headlineSlug}`;
+          updateData.slug = structuredSlug; // ← FIXED: top-level property
+        }
+
+        if (!Object.keys(updateData.fieldData).length && !updateData.slug) {
+          results.skipped++; 
+          results.skipReasons.push({ id: bill.id, reason: "No changes to apply" }); 
+          continue;
         }
 
         const staging = await patchStaging(bill.id, updateData);
         if (!staging.ok) {
-          const e = await staging.json().catch(() => ({}));
-          results.errors.push({ billId: bill.id, error: `Staging update failed: ${e.message || staging.statusText}` });
+          // FIXED: Enhanced error logging
+          const body = await staging.json().catch(() => ({}));
+          results.errors.push({
+            billId: bill.id,
+            error: `Staging update failed`,
+            status: staging.status,
+            message: body.message || staging.statusText,
+            details: body.details || body,
+            sentData: updateData // Include what we tried to send for debugging
+          });
           continue;
         }
 
@@ -439,7 +445,7 @@ export default async function handler(req, res) {
         processed: results.processed,
         updated: results.updated,
         skipped: results.skipped,
-        published: publishedOk, // ← Now reports actual successful publishes
+        published: publishedOk,
         errors: results.errors.length
       },
       updatedBills: results.bills,
