@@ -252,11 +252,31 @@ export default async function handler(req, res) {
           senateInfo = primaryInfo;
         }
 
+        // Helper to create URL-friendly slug
+        const createSlug = (text) => {
+          return text
+            .toLowerCase()
+            .replace(/[^a-z0-9\s-]/g, '') // Remove special chars except spaces and hyphens
+            .replace(/\s+/g, '-')         // Replace spaces with hyphens
+            .replace(/-+/g, '-')          // Replace multiple hyphens with single
+            .replace(/^-|-$/g, '')        // Remove leading/trailing hyphens
+            .substring(0, 100);           // Limit length
+        };
+
         const updateData = { fieldData: {} };
         Object.assign(updateData.fieldData, corrections);
 
+        let billTitle = currentName;
         if (isPlaceholderName(currentName, primaryNumber)) {
-          updateData.fieldData["name"] = primaryInfo.title || primaryNumber;
+          billTitle = primaryInfo.title || primaryNumber;
+          updateData.fieldData["name"] = billTitle;
+        }
+
+        // Create structured slug: bills/[year]/[bill-headline]
+        if (legislativeYear && billTitle) {
+          const slugSuffix = createSlug(billTitle);
+          const structuredSlug = `bills/${legislativeYear}/${slugSuffix}`;
+          updateData.fieldData["slug"] = structuredSlug;
         }
 
         const wfStatusId = computeStatus(primaryInfo, { state, legislativeYear });
