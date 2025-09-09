@@ -260,7 +260,7 @@ export default async function handler(req, res) {
             .replace(/\s+/g, '-')         // Replace spaces with hyphens
             .replace(/-+/g, '-')          // Replace multiple hyphens with single
             .replace(/^-|-$/g, '')        // Remove leading/trailing hyphens
-            .substring(0, 100);           // Limit length
+            .substring(0, 80);            // Limit length for headline part
         };
 
         const updateData = { fieldData: {} };
@@ -272,10 +272,11 @@ export default async function handler(req, res) {
           updateData.fieldData["name"] = billTitle;
         }
 
-        // Create structured slug: bills/[year]/[bill-headline]
+        // Create structured slug: [year]--[bill-numbers]--[headline]
         if (legislativeYear && billTitle) {
-          const slugSuffix = createSlug(billTitle);
-          const structuredSlug = `bills/${legislativeYear}/${slugSuffix}`;
+          const billNumbers = [houseNumber, senateNumber].filter(Boolean).join('-').toLowerCase();
+          const headlineSlug = createSlug(billTitle);
+          const structuredSlug = `${legislativeYear}--${billNumbers}--${headlineSlug}`;
           updateData.fieldData["slug"] = structuredSlug;
         }
 
