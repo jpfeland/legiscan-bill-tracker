@@ -159,9 +159,9 @@ export default async function handler(req, res) {
         const wfStatusId = computeStatus(primaryInfo, { state, legislativeYear });
         if (wfStatusId) updateData.fieldData["bill-status"] = wfStatusId;
 
-        // Timeline HTML (change 'timeline' to your actual slug if different)
+        // Timeline HTML - always update this field
         const timelineHtml = buildTimelineHtml(primaryInfo);
-        if (timelineHtml) updateData.fieldData["timeline"] = timelineHtml;
+        updateData.fieldData["timeline"] = timelineHtml || ""; // Always set timeline, even if empty
 
         // Links
         if (houseNumber) {
