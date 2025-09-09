@@ -108,38 +108,52 @@ export default async function handler(req, res) {
       const list = Array.isArray(info?.sponsors) ? [...info.sponsors] : [];
       if (!list.length) return "";
 
-      const norm = (s = "") => s.toLowerCase().trim();
-      const roleRank = (r) => {
-        const x = norm(r);
-        if (/^(author|primary sponsor|chief author|lead author)$/.test(x)) return 0;
-        if (/^(sponsor|chief sponsor)$/.test(x)) return 1;
-        if (/^(co[-\s]?author|co[-\s]?sponsor)$/.test(x)) return 2;
-        return 3;
+      const sponsorTypeRank = (typeId) => {
+        // Use LegiScan's sponsor_type_id for more reliable filtering
+        // 1 = Primary Sponsor, 2 = Co-Sponsor, 3 = Joint Sponsor, 0 = Generic (exclude)
+        if (typeId === 1) return 0; // Primary Sponsor (highest priority)
+        if (typeId === 3) return 1; // Joint Sponsor  
+        if (typeId === 2) return 2; // Co-Sponsor
+        return 999; // Exclude Generic (0) and any other types
       };
 
       const prefixFor = (s) => {
+        // Try role_id first (more reliable): 1=Rep, 2=Sen
+        const roleId = Number(s?.role_id ?? 0);
+        if (roleId === 1) return "Rep.";
+        if (roleId === 2) return "Sen.";
+
+        // Fallback to text-based detection
+        const roleText = String(s?.role ?? "").toLowerCase();
+        if (roleText === "sen" || roleText === "senator") return "Sen.";
+        if (roleText === "rep" || roleText === "representative") return "Rep.";
+
+        // Legacy chamber detection
         const ch = String(s?.chamber ?? s?.chamber_id ?? s?.type ?? "").toLowerCase();
         if (ch === "s" || ch === "senate" || ch === "upper") return "Sen.";
         if (ch === "h" || ch === "house"  || ch === "lower") return "Rep.";
 
+        // Minnesota-specific district pattern matching
         const dist = String(s?.district ?? "");
         if (state === "MN") {
           if (/^\d{1,3}[A-B]$/i.test(dist)) return "Rep.";
           if (/^\d{1,3}$/.test(dist))       return "Sen.";
         }
-        if (/senate|senator/i.test(s?.role || "")) return "Sen.";
-        if (/house|represent/i.test(s?.role || "")) return "Rep.";
+        
         return "";
       };
 
-      list.sort(
-        (a, b) => roleRank(a?.role) - roleRank(b?.role) ||
+      // Filter to only include Primary, Joint, and Co-Sponsors (exclude Generic)
+      const filteredList = list.filter(s => sponsorTypeRank(s?.sponsor_type_id) < 999);
+
+      filteredList.sort(
+        (a, b) => sponsorTypeRank(a?.sponsor_type_id) - sponsorTypeRank(b?.sponsor_type_id) ||
                   (a?.name || "").localeCompare(b?.name || "")
       );
 
       const seen = new Set();
-      const items = list.filter((s) => {
-        const key = [s?.name, norm(s?.role), s?.party, s?.district].join("|");
+      const items = filteredList.filter((s) => {
+        const key = [s?.name, s?.sponsor_type_id, s?.party, s?.district].join("|");
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
@@ -149,11 +163,7 @@ export default async function handler(req, res) {
         const pref  = prefixFor(s);
         const name  = s?.name ? esc(s.name) : "";
         const party = s?.party ? ` (${esc(String(s.party))})` : "";
-        const bits  = [];
-        if (s?.district) bits.push(`Dist. ${esc(String(s.district))}`);
-        if (s?.role)     bits.push(esc(s.role));
-        const meta  = bits.join(", ");
-        const line  = meta ? `${pref} ${name}${party} — ${meta}`.trim() : `${pref} ${name}${party}`.trim();
+        const line  = `${pref} ${name}${party}`.trim();
         return i < items.length - 1 ? `<p>${line}</p><br>` : `<p>${line}</p>`;
       }).join("");
     }
