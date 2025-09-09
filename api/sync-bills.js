@@ -21,6 +21,12 @@ export default async function handler(req, res) {
       Passed: "d6de8b3f124dbc8e474cf520bfe7e9ca",
     };
 
+    // --- Webflow Option IDs (Jurisdiction)
+    const JURISDICTION_MAP = {
+      "3b566a1d5376e736be044c288bb44017": "MN", // Minnesota
+      "87a300e03b5ad785b240294477aaaf35": "US", // Federal
+    };
+
     // --- Helpers ------------------------------------------------------------
     const computeStatus = (billInfo, { state, legislativeYear }) => {
       const code = billInfo.status;
