@@ -259,7 +259,7 @@ export default async function handler(req, res) {
       const rawHouse = bill.fieldData["house-file-number"] || "";
       const rawSenate = bill.fieldData["senate-file-number"] || "";
       const currentName = bill.fieldData["name"]?.trim() || "";
-      const jurisdiction = bill.fieldData["jurisdiction"]?.trim() || "";
+      const jurisdictionId = bill.fieldData["jurisdiction"]; // Webflow stores the option ID
       const legislativeYear = bill.fieldData["legislative-year"]?.toString().trim();
 
       const { houseNumber, senateNumber, corrections } = normalizeNumbers(rawHouse, rawSenate);
@@ -268,7 +268,16 @@ export default async function handler(req, res) {
         results.skipped++; results.skipReasons.push({ id: bill.id, reason: "No HF/SF number" }); continue;
       }
 
-      const state = /^federal$/i.test(jurisdiction) ? "US" : "MN";
+      // Helper function to infer state from bill number patterns
+      function inferStateFromNumber(h, s) {
+        const n = String(h || s || "").toUpperCase();
+        if (/^(HF|SF)\d+$/.test(n)) return "MN";
+        if (/^(HB|SB|HR|SR|HJ|SJ|HC|SC)\d+$/.test(n)) return "US";
+        return "MN";
+      }
+
+      // Use Webflow option ID to determine state, with fallback to bill number pattern
+      const state = JURISDICTION_MAP[jurisdictionId] || inferStateFromNumber(houseNumber, senateNumber);
 
       try {
         const primaryNumber = houseNumber || senateNumber;
