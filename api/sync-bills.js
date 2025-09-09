@@ -53,13 +53,25 @@ export default async function handler(req, res) {
     }
 
     async function fetchLegiScanBill({ state, billNumber, year }) {
-      // Convert federal bill numbers to LegiScan format
       let searchNumber = billNumber;
+      
       if (state === "US") {
-        // LegiScan uses HB for House Bills (H.R.) and HR for House Resolutions (H.Res.)
-        // Since most are bills, try HB first for HR numbers
+        // For federal bills, try multiple formats
         if (/^HR\d+$/i.test(billNumber)) {
-          searchNumber = billNumber.replace(/^HR/i, "HB");
+          // First try as House Bill (HB) - most common
+          try {
+            searchNumber = billNumber.replace(/^HR/i, "HB");
+            let url = `https://api.legiscan.com/?key=${encodeURIComponent(LEGISCAN_API_KEY)}&op=getBill&state=${encodeURIComponent(state)}&bill=${encodeURIComponent(searchNumber)}`;
+            if (year) url += `&year=${encodeURIComponent(year)}`;
+            const r = await fetch(url);
+            const data = await r.json();
+            if (data.status === "OK" && data.bill) return data.bill;
+          } catch (e) {
+            // Fall through to try HR format
+          }
+          
+          // If HB failed, try as House Resolution (HR)
+          searchNumber = billNumber; // Keep original HR format
         }
         // Convert Senate numbers: S -> SB, SR stays SR
         else if (/^S\d+$/i.test(billNumber)) {
@@ -71,7 +83,7 @@ export default async function handler(req, res) {
       if (year) url += `&year=${encodeURIComponent(year)}`;
       const r = await fetch(url);
       const data = await r.json();
-      if (data.status !== "OK" || !data.bill) throw new Error(data.alert?.message || "Bill not found");
+      if (data.status !== "OK" || !data.bill) throw new Error(data.alert?.message || `Bill not found: ${searchNumber}`);
       return data.bill;
     }
 
@@ -83,11 +95,21 @@ export default async function handler(req, res) {
         
         // Prioritize state_link (often direct PDF) over LegiScan URL
         const pdf = texts.find(t => /pdf/i.test(t?.mime || "") || /\.pdf($|\?)/i.test(t?.state_link || t?.url || ""));
-        if (pdf) return pdf.state_link || pdf.url || null;
+        if (pdf) {
+          // Debug: Log the URLs being returned to see what's happening
+          console.log("PDF text found:", { state_link: pdf.state_link, url: pdf.url, mime: pdf.mime });
+          return pdf.state_link || pdf.url || null;
+        }
         
         const first = texts[0];
-        if (first) return first.state_link || first.url || null;
+        if (first) {
+          console.log("First text found:", { state_link: first.state_link, url: first.url, mime: first.mime });
+          return first.state_link || first.url || null;
+        }
       }
+      
+      // Fallback to main bill links
+      console.log("Fallback to main bill links:", { state_link: info.state_link, url: info.url });
       return info.state_link || info.url || null;
     }
 
