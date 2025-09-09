@@ -217,6 +217,7 @@ export default async function handler(req, res) {
           status: "updated",
           setStatus: statusText,
           timelinePreview: timelineHtml ? "Timeline generated" : "No timeline data",
+          timelineDebug: timelineHtml ? timelineHtml.substring(0, 300) + "..." : null
         });
 
         await sleep(200);
