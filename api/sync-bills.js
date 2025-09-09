@@ -88,16 +88,20 @@ export default async function handler(req, res) {
         const a = info?.last_action || 'No recent actions recorded';
         if (!d && !a) return '';
         const dateText = fmt(d);
-        return dateText ? `<p><strong>${esc(dateText)}</strong><br>${esc(a)}</p><br><br>` : `<p>${esc(a)}</p><br><br>`;
+        return dateText ? `<p><strong>${esc(dateText)}</strong><br>${esc(a)}</p>` : `<p>${esc(a)}</p>`;
       }
 
       // newest first, cap to 12
       hist.sort((a,b) => new Date(b.date || b.action_date || 0) - new Date(a.date || a.action_date || 0));
-      const rows = hist.slice(0,12).map(it => {
+      const topItems = hist.slice(0,12);
+      const rows = topItems.map((it, index) => {
         const d = fmt(it.date || it.action_date || '');
         const actionText = it.action || '';
         
-        return d ? `<p><strong>${esc(d)}</strong><br>${esc(actionText)}</p><br><br>` : `<p>${esc(actionText)}</p><br><br>`;
+        const html = d ? `<p><strong>${esc(d)}</strong><br>${esc(actionText)}</p>` : `<p>${esc(actionText)}</p>`;
+        
+        // Add spacing between entries, but not after the last one
+        return index < topItems.length - 1 ? html + '<br><br>' : html;
       }).join('');
 
       return rows;
