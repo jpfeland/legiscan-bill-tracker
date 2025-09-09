@@ -438,7 +438,8 @@ export default async function handler(req, res) {
           status: "staged",
           houseStatus: houseStatusText,
           senateStatus: senateStatusText,
-          timelinePreview: timelineHtml ? "Timeline generated" : "No timeline data",
+          houseTimelinePreview: houseNumber ? "Timeline generated" : "No house timeline",
+          senateTimelinePreview: senateNumber ? "Timeline generated" : "No senate timeline",
         });
 
         await sleep(120);
