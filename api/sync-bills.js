@@ -92,17 +92,16 @@ export default async function handler(req, res) {
         return dateText ? `<p><strong>${esc(dateText)}</strong><br>${esc(a)}</p>` : `<p>${esc(a)}</p>`;
       }
 
-      // newest first, cap to 12
+      // newest first, show all history
       hist.sort((a,b) => new Date(b.date || b.action_date || 0) - new Date(a.date || a.action_date || 0));
-      const topItems = hist.slice(0,12);
-      const rows = topItems.map((it, index) => {
+      const rows = hist.map((it, index) => {
         const d = fmt(it.date || it.action_date || '');
         const actionText = it.action || '';
         
         const html = d ? `<p><strong>${esc(d)}</strong><br>${esc(actionText)}</p>` : `<p>${esc(actionText)}</p>`;
         
         // Add spacing between entries, but not after the last one
-        return index < topItems.length - 1 ? html + '<br><br>' : html;
+        return index < hist.length - 1 ? html + '<br>' : html;
       }).join('');
 
       return rows;
@@ -176,6 +175,10 @@ export default async function handler(req, res) {
         // Timeline - always update this field
         const timelineHtml = buildTimelineHtml(primaryInfo);
         updateData.fieldData["timeline"] = timelineHtml || ""; // Always set timeline, even if empty
+
+        // Sponsors - always update this field
+        const sponsorsHtml = buildSponsorsHtml(primaryInfo);
+        updateData.fieldData["sponsors"] = sponsorsHtml || ""; // Always set sponsors, even if empty
 
         // Links
         if (houseNumber) {
