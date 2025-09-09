@@ -93,20 +93,11 @@ export default async function handler(req, res) {
 
       // newest first, cap to 12
       hist.sort((a,b) => new Date(b.date || b.action_date || 0) - new Date(a.date || a.action_date || 0));
-      const rows = hist.slice(0,12).map((it, index) => {
+      const rows = hist.slice(0,12).map(it => {
         const d = fmt(it.date || it.action_date || '');
-        const isLatest = index === 0;
-        
-        // Just the action text, no chamber or major flags
         const actionText = it.action || '';
         
-        if (isLatest) {
-          // Latest entry: normal styling
-          return d ? `<p><strong>${esc(d)}</strong><br>${esc(actionText)}</p><br><br>` : `<p>${esc(actionText)}</p><br><br>`;
-        } else {
-          // Regular entries: p2 class and gray color with !important
-          return d ? `<p class="p2" style="color: var(--Gray-03) !important;"><strong>${esc(d)}</strong><br>${esc(actionText)}</p><br><br>` : `<p class="p2" style="color: var(--Gray-03) !important;">${esc(actionText)}</p><br><br>`;
-        }
+        return d ? `<p><strong>${esc(d)}</strong><br>${esc(actionText)}</p><br><br>` : `<p>${esc(actionText)}</p><br><br>`;
       }).join('');
 
       return rows;
