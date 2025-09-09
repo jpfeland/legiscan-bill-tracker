@@ -20,15 +20,13 @@ export default async function handler(req, res) {
       if (!r.ok) throw new Error(`Failed to load collection schema: ${r.status}`);
       const col = await r.json();
 
-      const bySlug = Object.fromEntries(
-        (col.fields || []).map(f => [f.slug, f])
-      );
+      const bySlug = Object.fromEntries((col.fields || []).map(f => [f.slug, f]));
 
       function makeMap(slug, names) {
         const f = bySlug[slug];
         if (!f) throw new Error(`Field not found: ${slug}`);
         if (f.type !== "Option") throw new Error(`Field ${slug} is not Option type`);
-        const opts = (f.validations?.options) || [];
+        const opts = f.validations?.options || [];
         const map = {};
         names.forEach(name => {
           const opt = opts.find(o => o.name.toLowerCase() === name.toLowerCase());
@@ -38,15 +36,14 @@ export default async function handler(req, res) {
         return map;
       }
 
-      // Build maps for each field independently
       return {
         houseStatusIds: makeMap("house-file-status", ["Active","Tabled","Failed","Passed"]),
         senateStatusIds: makeMap("senate-file-status", ["Active","Tabled","Failed","Passed"]),
-        jurisdictionIds: makeMap("jurisdiction", ["Minnesota","Federal"]),
+        jurisdictionIds: makeMap("jurisdiction", ["Minnesota","Federal"]), // not used, but fine to keep
       };
     }
 
-    // --- Webflow Option IDs (Jurisdiction) - Keep this static since it's simple
+    // --- Webflow Option IDs (Jurisdiction) - static
     const JURISDICTION_MAP = {
       "3b566a1d5376e736be044c288bb44017": "MN", // Minnesota
       "87a300e03b5ad785b240294477aaaf35": "US", // Federal
@@ -65,7 +62,6 @@ export default async function handler(req, res) {
 
       if (looksDead) return "Tabled";
       if (cutoff && new Date() >= cutoff && (code === 1 || code === 2 || code === 3)) return "Tabled";
-
       return "Active";
     }
 
@@ -85,11 +81,9 @@ export default async function handler(req, res) {
 
     async function fetchLegiScanBill({ state, billNumber, year }) {
       let searchNumber = billNumber;
-      
+
       if (state === "US") {
-        // For federal bills, try multiple formats
         if (/^HR\d+$/i.test(billNumber)) {
-          // First try as House Bill (HB) - most common
           try {
             searchNumber = billNumber.replace(/^HR/i, "HB");
             let url = `https://api.legiscan.com/?key=${encodeURIComponent(LEGISCAN_API_KEY)}&op=getBill&state=${encodeURIComponent(state)}&bill=${encodeURIComponent(searchNumber)}`;
@@ -97,15 +91,9 @@ export default async function handler(req, res) {
             const r = await fetch(url);
             const data = await r.json();
             if (data.status === "OK" && data.bill) return data.bill;
-          } catch (e) {
-            // Fall through to try HR format
-          }
-          
-          // If HB failed, try as House Resolution (HR)
-          searchNumber = billNumber; // Keep original HR format
-        }
-        // Convert Senate numbers: S -> SB, SR stays SR
-        else if (/^S\d+$/i.test(billNumber)) {
+          } catch {} // fall through
+          searchNumber = billNumber;
+        } else if (/^S\d+$/i.test(billNumber)) {
           searchNumber = billNumber.replace(/^S/i, "SB");
         }
       }
@@ -123,24 +111,11 @@ export default async function handler(req, res) {
       const texts = Array.isArray(info.texts) ? info.texts.slice() : [];
       if (texts.length) {
         texts.sort((a, b) => new Date(b.date || b.action_date || 0) - new Date(a.date || a.action_date || 0));
-        
-        // Prioritize state_link (often direct PDF) over LegiScan URL
         const pdf = texts.find(t => /pdf/i.test(t?.mime || "") || /\.pdf($|\?)/i.test(t?.state_link || t?.url || ""));
-        if (pdf) {
-          // Debug: Log the URLs being returned to see what's happening
-          console.log("PDF text found:", { state_link: pdf.state_link, url: pdf.url, mime: pdf.mime });
-          return pdf.state_link || pdf.url || null;
-        }
-        
+        if (pdf) return pdf.state_link || pdf.url || null;
         const first = texts[0];
-        if (first) {
-          console.log("First text found:", { state_link: first.state_link, url: first.url, mime: first.mime });
-          return first.state_link || first.url || null;
-        }
+        if (first) return first.state_link || first.url || null;
       }
-      
-      // Fallback to main bill links
-      console.log("Fallback to main bill links:", { state_link: info.state_link, url: info.url });
       return info.state_link || info.url || null;
     }
 
@@ -163,29 +138,22 @@ export default async function handler(req, res) {
       }
 
       hist.sort((a,b) => new Date(b.date || b.action_date || 0) - new Date(a.date || a.action_date || 0));
-      
-      // Group actions by date
+
       const groupedByDate = new Map();
       hist.forEach(item => {
         const dateKey = item.date || item.action_date || '';
         const action = item.action || '';
-        if (!groupedByDate.has(dateKey)) {
-          groupedByDate.set(dateKey, []);
-        }
+        if (!groupedByDate.has(dateKey)) groupedByDate.set(dateKey, []);
         groupedByDate.get(dateKey).push(action);
       });
 
-      // Convert to HTML with grouped dates
       const rows = Array.from(groupedByDate.entries()).map((entry, index) => {
         const [dateKey, actions] = entry;
         const dateText = fmt(dateKey);
-        
         if (actions.length === 1) {
-          // Single action: keep original format
           const html = dateText ? `<p><strong>${esc(dateText)}</strong><br>${esc(actions[0])}</p>` : `<p>${esc(actions[0])}</p>`;
           return index < groupedByDate.size - 1 ? html + '<br>' : html;
         } else {
-          // Multiple actions: use bullet list
           const actionItems = actions.map(action => `• ${esc(action)}`).join('<br>');
           const html = dateText ? `<p><strong>${esc(dateText)}</strong><br>${actionItems}</p>` : `<p>${actionItems}</p>`;
           return index < groupedByDate.size - 1 ? html + '<br>' : html;
@@ -195,47 +163,38 @@ export default async function handler(req, res) {
       return rows;
     }
 
-    // --- Sponsors helper with Rep./Sen. prefix ------------------------------
     function buildSponsorsHtml(info, { state = "MN" } = {}) {
       const list = Array.isArray(info?.sponsors) ? [...info.sponsors] : [];
       if (!list.length) return "";
 
       const sponsorTypeRank = (typeId) => {
-        // Include Primary Sponsors (rank 0) and Joint Sponsors (rank 1)
-        if (typeId === 1) return 0; // Primary Sponsor (highest priority)
-        if (typeId === 3) return 1; // Joint Sponsor
-        return 999; // Exclude Co-Sponsors (2) and Generic (0)
+        if (typeId === 1) return 0; // Primary
+        if (typeId === 3) return 1; // Joint
+        return 999;                // Skip others
       };
 
       const prefixFor = (s) => {
-        // Try role_id first (more reliable): 1=Rep, 2=Sen
         const roleId = Number(s?.role_id ?? 0);
         if (roleId === 1) return "Rep.";
         if (roleId === 2) return "Sen.";
 
-        // Fallback to text-based detection
         const roleText = String(s?.role ?? "").toLowerCase();
         if (roleText === "sen" || roleText === "senator") return "Sen.";
         if (roleText === "rep" || roleText === "representative") return "Rep.";
 
-        // Legacy chamber detection
         const ch = String(s?.chamber ?? s?.chamber_id ?? s?.type ?? "").toLowerCase();
         if (ch === "s" || ch === "senate" || ch === "upper") return "Sen.";
         if (ch === "h" || ch === "house"  || ch === "lower") return "Rep.";
 
-        // Minnesota-specific district pattern matching
         const dist = String(s?.district ?? "");
         if (state === "MN") {
           if (/^\d{1,3}[A-B]$/i.test(dist)) return "Rep.";
           if (/^\d{1,3}$/.test(dist))       return "Sen.";
         }
-        
         return "";
       };
 
-      // Filter to include Primary Sponsors (rank 0) and Joint Sponsors (rank 1)
       const filteredList = list.filter(s => sponsorTypeRank(s?.sponsor_type_id) < 999);
-
       filteredList.sort(
         (a, b) => sponsorTypeRank(a?.sponsor_type_id) - sponsorTypeRank(b?.sponsor_type_id) ||
                   (a?.name || "").localeCompare(b?.name || "")
@@ -258,16 +217,13 @@ export default async function handler(req, res) {
       }).join("");
     }
 
-    // Helper to create URL-friendly slug
-    const createSlug = (text) => {
-      return text
-        .toLowerCase()
-        .replace(/[^a-z0-9\s-]/g, '') // Remove special chars except spaces and hyphens
-        .replace(/\s+/g, '-')         // Replace spaces with hyphens
-        .replace(/-+/g, '-')          // Replace multiple hyphens with single
-        .replace(/^-|-$/g, '')        // Remove leading/trailing hyphens
-        .substring(0, 80);            // Limit length for headline part
-    };
+    const createSlug = (text) =>
+      text.toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .substring(0, 80);
 
     async function patchStaging(itemId, data) {
       const u = `https://api.webflow.com/v2/collections/${COLLECTION_ID}/items/${itemId}`;
@@ -295,33 +251,33 @@ export default async function handler(req, res) {
     const bills = (await listRes.json()).items || [];
 
     // Get dynamic option ID mappings from schema
-    const { houseStatusIds, senateStatusIds, jurisdictionIds } = await getOptionIdMaps();
+    const { houseStatusIds, senateStatusIds /*, jurisdictionIds*/ } = await getOptionIdMaps();
 
     // --- Process items ------------------------------------------------------
     for (const bill of bills) {
       results.processed++;
 
-      // Check for manual override - skip if enabled
-      const manualOverride = bill.fieldData["manual-override"];
-      if (manualOverride === true) {
-        results.skipped++; 
-        results.skipReasons.push({ id: bill.id, reason: "Manual override enabled" }); 
+      // Manual override
+      if (bill.fieldData["manual-override"] === true) {
+        results.skipped++;
+        results.skipReasons.push({ id: bill.id, reason: "Manual override enabled" });
         continue;
       }
 
       const rawHouse = bill.fieldData["house-file-number"] || "";
       const rawSenate = bill.fieldData["senate-file-number"] || "";
       const currentName = bill.fieldData["name"]?.trim() || "";
-      const jurisdictionId = bill.fieldData["jurisdiction"]; // Webflow stores the option ID
+      const jurisdictionId = bill.fieldData["jurisdiction"];
       const legislativeYear = bill.fieldData["legislative-year"]?.toString().trim();
 
       const { houseNumber, senateNumber, corrections } = normalizeNumbers(rawHouse, rawSenate);
 
       if (!houseNumber && !senateNumber) {
-        results.skipped++; results.skipReasons.push({ id: bill.id, reason: "No HF/SF number" }); continue;
+        results.skipped++; 
+        results.skipReasons.push({ id: bill.id, reason: "No HF/SF number" });
+        continue;
       }
 
-      // Helper function to infer state from bill number patterns
       function inferStateFromNumber(h, s) {
         const n = String(h || s || "").toUpperCase();
         if (/^(HF|SF)\d+$/.test(n)) return "MN";
@@ -329,7 +285,6 @@ export default async function handler(req, res) {
         return "MN";
       }
 
-      // Use Webflow option ID to determine state, with fallback to bill number pattern
       const state = JURISDICTION_MAP[jurisdictionId] || inferStateFromNumber(houseNumber, senateNumber);
 
       try {
@@ -350,44 +305,43 @@ export default async function handler(req, res) {
           senateInfo = primaryInfo;
         }
 
-        // Build update payload with proper structure
         const updateData = { fieldData: {} };
-        
-        // Apply corrections to bill numbers
+
+        // Corrections
         Object.assign(updateData.fieldData, corrections);
 
+        // Title
         let billTitle = currentName;
         if (isPlaceholderName(currentName, primaryNumber)) {
           billTitle = primaryInfo.title || primaryNumber;
           updateData.fieldData["name"] = billTitle;
         }
 
-        // Status - now separate for House and Senate using dynamic IDs
+        // Status (separate)
         if (houseNumber && houseInfo) {
           const statusKey = computeStatusKey(houseInfo, { state, legislativeYear });
           updateData.fieldData["house-file-status"] = houseStatusIds[statusKey];
         }
-        
         if (senateNumber && senateInfo) {
           const statusKey = computeStatusKey(senateInfo, { state, legislativeYear });
           updateData.fieldData["senate-file-status"] = senateStatusIds[statusKey];
         }
 
-        // Rich text fields
+        // Rich text fields (single timeline from primary)
         const timelineHtml = buildTimelineHtml(primaryInfo);
         updateData.fieldData["timeline"] = timelineHtml || "";
 
         const sponsorsHtml = buildSponsorsHtml(primaryInfo, { state });
         updateData.fieldData["sponsors"] = sponsorsHtml || "";
 
-        // URL fields - use null to clear, not empty string
+        // Links
         if (houseNumber) {
           const link = pickBestTextUrl(houseInfo);
           if (link) updateData.fieldData["house-file-link"] = link;
         } else if (corrections["house-file-number"] === "") {
           updateData.fieldData["house-file-link"] = null;
         }
-        
+
         if (senateNumber) {
           const link = pickBestTextUrl(senateInfo);
           if (link) updateData.fieldData["senate-file-link"] = link;
@@ -395,17 +349,17 @@ export default async function handler(req, res) {
           updateData.fieldData["senate-file-link"] = null;
         }
 
-        // Slug must be TOP-LEVEL, not in fieldData
+        // Slug (top-level)
         if (legislativeYear && billTitle) {
           const billNumbers = [houseNumber, senateNumber].filter(Boolean).join('-').toLowerCase();
           const headlineSlug = createSlug(billTitle);
-          const structuredSlug = `${legislativeYear}--${billNumbers}--${headlineSlug}`;
+          const structuredSlug = `${legislativeYear}--${billNumbers || 'bill'}--${headlineSlug}`;
           updateData.slug = structuredSlug;
         }
 
         if (!Object.keys(updateData.fieldData).length && !updateData.slug) {
-          results.skipped++; 
-          results.skipReasons.push({ id: bill.id, reason: "No changes to apply" }); 
+          results.skipped++;
+          results.skipReasons.push({ id: bill.id, reason: "No changes to apply" });
           continue;
         }
 
@@ -425,10 +379,10 @@ export default async function handler(req, res) {
 
         toPublish.push(bill.id);
 
-        // Get status text for logging using the computed keys
+        // Log-friendly summary
         const houseStatusText = houseNumber ? computeStatusKey(houseInfo, { state, legislativeYear }) : null;
         const senateStatusText = senateNumber ? computeStatusKey(senateInfo, { state, legislativeYear }) : null;
-        
+
         results.updated++;
         results.bills.push({
           id: bill.id,
@@ -438,8 +392,7 @@ export default async function handler(req, res) {
           status: "staged",
           houseStatus: houseStatusText,
           senateStatus: senateStatusText,
-          houseTimelinePreview: houseTimelineHtml ? "Timeline generated" : "No house timeline",
-          senateTimelinePreview: senateTimelineHtml ? "Timeline generated" : "No senate timeline",
+          timelinePreview: timelineHtml ? "Timeline generated" : "No timeline",
         });
 
         await sleep(120);
@@ -449,7 +402,7 @@ export default async function handler(req, res) {
     }
 
     // --- Publish to LIVE in batches ----------------------------------------
-    let publishedOk = 0; // Track actual successful publishes
+    let publishedOk = 0;
     const CHUNK = 100;
     for (let i = 0; i < toPublish.length; i += CHUNK) {
       const slice = toPublish.slice(i, i + CHUNK);
@@ -463,14 +416,13 @@ export default async function handler(req, res) {
           affectedItems: slice,
         });
       } else {
-        // Handle different possible response formats from Webflow
         const ids = Array.isArray(body.itemIds) ? body.itemIds
                  : Array.isArray(body.items) ? body.items.map(x => x.id)
                  : [];
         publishedOk += ids.length;
-        results.bills.push({ 
-          publishedCount: ids.length, 
-          itemIds: ids.length ? ids : slice 
+        results.bills.push({
+          publishedCount: ids.length,
+          itemIds: ids.length ? ids : slice
         });
       }
       await sleep(700);
