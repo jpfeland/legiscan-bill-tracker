@@ -262,6 +262,14 @@ export default async function handler(req, res) {
     for (const bill of bills) {
       results.processed++;
 
+      // Check for manual override - skip if enabled
+      const manualOverride = bill.fieldData["manual-override"];
+      if (manualOverride === true) {
+        results.skipped++; 
+        results.skipReasons.push({ id: bill.id, reason: "Manual override enabled" }); 
+        continue;
+      }
+
       const rawHouse = bill.fieldData["house-file-number"] || "";
       const rawSenate = bill.fieldData["senate-file-number"] || "";
       const currentName = bill.fieldData["name"]?.trim() || "";
