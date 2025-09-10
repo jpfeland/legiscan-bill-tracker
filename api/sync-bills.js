@@ -414,6 +414,8 @@ export default async function handler(req, res) {
           senateStatusCode: senateNumber && senateInfo ? senateInfo.status : null,
           houseTimelinePreview: houseTimelineHtml ? "Timeline generated" : "No house timeline",
           senateTimelinePreview: senateTimelineHtml ? "Timeline generated" : "No senate timeline",
+          houseSponsorPreview: houseSponsorsHtml ? "Sponsors generated" : "No house sponsors",
+          senateSponsorPreview: senateSponsorsHtml ? "Sponsors generated" : "No senate sponsors",
         });
 
         await sleep(120);
