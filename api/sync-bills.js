@@ -346,16 +346,21 @@ export default async function handler(req, res) {
         const combinedTimelineHtml = buildTimelineHtml(primaryInfo);
         updateData.fieldData["timeline"] = combinedTimelineHtml || "";
 
-        // Chamber-specific (match your slugs exactly)
+        // Chamber-specific timelines
         updateData.fieldData["house-file-timeline"]  = houseNumber  ? (houseTimelineHtml  || "") : null;
         updateData.fieldData["senate-file-timeline"] = senateNumber ? (senateTimelineHtml || "") : null;
 
-        // Sponsors (primary + per chamber previews)
+        // --- Sponsors (primary + per chamber) -------------------------------------
         const sponsorsHtml       = buildSponsorsHtml(primaryInfo, { state });
         const houseSponsorsHtml  = houseInfo  ? buildSponsorsHtml(houseInfo,  { state }) : "";
         const senateSponsorsHtml = senateInfo ? buildSponsorsHtml(senateInfo, { state }) : "";
 
+        // Write ALL sponsor fields - combined and chamber-specific
         updateData.fieldData["sponsors"] = sponsorsHtml || "";
+        
+        // FIXED: Actually write the chamber-specific sponsor fields!
+        updateData.fieldData["house-file-sponsors"] = houseNumber ? (houseSponsorsHtml || "") : null;
+        updateData.fieldData["senate-file-sponsors"] = senateNumber ? (senateSponsorsHtml || "") : null;
 
         // Links
         if (houseNumber) {
@@ -420,8 +425,8 @@ export default async function handler(req, res) {
           houseTimelinePreview: houseTimelineHtml ? "Timeline generated" : "No house timeline",
           senateTimelinePreview: senateTimelineHtml ? "Timeline generated" : "No senate timeline",
           sponsorsPreview: sponsorsHtml ? "Sponsors generated" : "No sponsors",
-          houseSponsorsPreview: houseSponsorsHtml ? "Sponsors generated" : "No house sponsors",
-          senateSponsorsPreview: senateSponsorsHtml ? "Sponsors generated" : "No senate sponsors",
+          houseSponsorsPreview: houseSponsorsHtml ? "House sponsors generated" : "No house sponsors",
+          senateSponsorsPreview: senateSponsorsHtml ? "Senate sponsors generated" : "No senate sponsors",
         });
 
         await sleep(120);
