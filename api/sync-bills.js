@@ -9,7 +9,15 @@ export default async function handler(req, res) {
       return res.status(400).json({ success: false, error: "Missing environment variables" });
     }
 
-    const results = { timestamp: new Date().toISOString(), processed: 0, updated: 0, skipped: 0, skipReasons: [], errors: [], bills: [] };
+    const results = {
+      timestamp: new Date().toISOString(),
+      processed: 0,
+      updated: 0,
+      skipped: 0,
+      skipReasons: [],
+      errors: [],
+      bills: []
+    };
     const toPublish = [];
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -39,11 +47,11 @@ export default async function handler(req, res) {
       return {
         houseStatusIds: makeMap("house-file-status", ["Active","Tabled","Failed","Passed"]),
         senateStatusIds: makeMap("senate-file-status", ["Active","Tabled","Failed","Passed"]),
-        jurisdictionIds: makeMap("jurisdiction", ["Minnesota","Federal"]), // not used, but fine to keep
+        jurisdictionIds: makeMap("jurisdiction", ["Minnesota","Federal"]), // not used below
       };
     }
 
-    // --- Webflow Option IDs (Jurisdiction) - static
+    // --- Webflow Option IDs (Jurisdiction) - static → state code
     const JURISDICTION_MAP = {
       "3b566a1d5376e736be044c288bb44017": "MN", // Minnesota
       "87a300e03b5ad785b240294477aaaf35": "US", // Federal
@@ -67,7 +75,10 @@ export default async function handler(req, res) {
 
     const isPlaceholderName = (name, billNum) => {
       const n = (name || "").trim();
-      return !n || (billNum && n.toUpperCase() === billNum.toUpperCase()) || /^[HS]F[-\s]?\d+$/i.test(n) || /^(untitled|tbd|placeholder)$/i.test(n);
+      return !n
+        || (billNum && n.toUpperCase() === billNum.toUpperCase())
+        || /^[HS]F[-\s]?\d+$/i.test(n)
+        || /^(untitled|tbd|placeholder)$/i.test(n);
     };
 
     function normalizeNumbers(rawHouse, rawSenate) {
@@ -91,7 +102,7 @@ export default async function handler(req, res) {
             const r = await fetch(url);
             const data = await r.json();
             if (data.status === "OK" && data.bill) return data.bill;
-          } catch {} // fall through
+          } catch {}
           searchNumber = billNumber;
         } else if (/^S\d+$/i.test(billNumber)) {
           searchNumber = billNumber.replace(/^S/i, "SB");
@@ -331,25 +342,19 @@ export default async function handler(req, res) {
         const houseTimelineHtml  = houseInfo  ? buildTimelineHtml(houseInfo)  : "";
         const senateTimelineHtml = senateInfo ? buildTimelineHtml(senateInfo) : "";
 
-        // Combined (keep your existing main timeline)
+        // Combined (main timeline)
         const combinedTimelineHtml = buildTimelineHtml(primaryInfo);
         updateData.fieldData["timeline"] = combinedTimelineHtml || "";
 
         // Chamber-specific (match your slugs exactly)
-        if (houseNumber) {
-          updateData.fieldData["house-file-timeline"] = houseTimelineHtml || "";
-        } else {
-          updateData.fieldData["house-file-timeline"] = null; // clear if no HF
-        }
+        updateData.fieldData["house-file-timeline"]  = houseNumber  ? (houseTimelineHtml  || "") : null;
+        updateData.fieldData["senate-file-timeline"] = senateNumber ? (senateTimelineHtml || "") : null;
 
-        if (senateNumber) {
-          updateData.fieldData["senate-file-timeline"] = senateTimelineHtml || "";
-        } else {
-          updateData.fieldData["senate-file-timeline"] = null; // clear if no SF
-        }
+        // Sponsors (primary + per chamber previews)
+        const sponsorsHtml       = buildSponsorsHtml(primaryInfo, { state });
+        const houseSponsorsHtml  = houseInfo  ? buildSponsorsHtml(houseInfo,  { state }) : "";
+        const senateSponsorsHtml = senateInfo ? buildSponsorsHtml(senateInfo, { state }) : "";
 
-        // Rich text fields (sponsors from primary)
-        const sponsorsHtml = buildSponsorsHtml(primaryInfo, { state });
         updateData.fieldData["sponsors"] = sponsorsHtml || "";
 
         // Links
@@ -414,8 +419,9 @@ export default async function handler(req, res) {
           senateStatusCode: senateNumber && senateInfo ? senateInfo.status : null,
           houseTimelinePreview: houseTimelineHtml ? "Timeline generated" : "No house timeline",
           senateTimelinePreview: senateTimelineHtml ? "Timeline generated" : "No senate timeline",
-          houseSponsorPreview: houseSponsorsHtml ? "Sponsors generated" : "No house sponsors",
-          senateSponsorPreview: senateSponsorsHtml ? "Sponsors generated" : "No senate sponsors",
+          sponsorsPreview: sponsorsHtml ? "Sponsors generated" : "No sponsors",
+          houseSponsorsPreview: houseSponsorsHtml ? "Sponsors generated" : "No house sponsors",
+          senateSponsorsPreview: senateSponsorsHtml ? "Sponsors generated" : "No senate sponsors",
         });
 
         await sleep(120);
