@@ -327,10 +327,28 @@ export default async function handler(req, res) {
           updateData.fieldData["senate-file-status"] = senateStatusIds[statusKey];
         }
 
-        // Rich text fields (single timeline from primary)
-        const timelineHtml = buildTimelineHtml(primaryInfo);
-        updateData.fieldData["timeline"] = timelineHtml || "";
+        // --- Timelines -------------------------------------------------------------
+        const houseTimelineHtml  = houseInfo  ? buildTimelineHtml(houseInfo)  : "";
+        const senateTimelineHtml = senateInfo ? buildTimelineHtml(senateInfo) : "";
 
+        // Combined (keep your existing main timeline)
+        const combinedTimelineHtml = buildTimelineHtml(primaryInfo);
+        updateData.fieldData["timeline"] = combinedTimelineHtml || "";
+
+        // Chamber-specific (match your slugs exactly)
+        if (houseNumber) {
+          updateData.fieldData["house-file-timeline"] = houseTimelineHtml || "";
+        } else {
+          updateData.fieldData["house-file-timeline"] = null; // clear if no HF
+        }
+
+        if (senateNumber) {
+          updateData.fieldData["senate-file-timeline"] = senateTimelineHtml || "";
+        } else {
+          updateData.fieldData["senate-file-timeline"] = null; // clear if no SF
+        }
+
+        // Rich text fields (sponsors from primary)
         const sponsorsHtml = buildSponsorsHtml(primaryInfo, { state });
         updateData.fieldData["sponsors"] = sponsorsHtml || "";
 
@@ -392,7 +410,8 @@ export default async function handler(req, res) {
           status: "staged",
           houseStatus: houseStatusText,
           senateStatus: senateStatusText,
-          timelinePreview: timelineHtml ? "Timeline generated" : "No timeline",
+          houseTimelinePreview: houseTimelineHtml ? "Timeline generated" : "No house timeline",
+          senateTimelinePreview: senateTimelineHtml ? "Timeline generated" : "No senate timeline",
         });
 
         await sleep(120);
